@@ -96,8 +96,9 @@ app.registerExtension({
   },
   registerCustomNodes(){
     class ImageBrowser extends LiteGraph.LGraphNode {
-      constructor(){super('Healingarty Image Browser');this.serialize_widgets=false;this.size=[720,550];this.resizable=true;this.panel=new BrowserPanel(this);
-        this.addDOMWidget('browser','healingarty-browser',this.panel.root,{serialize:false,hideOnZoom:false,getMinHeight:()=>280,getHeight:()=>Math.max(280,this.size[1]-35)});
+      constructor(){super('Healingarty Image Browser');this.isVirtualNode=true;this.serialize_widgets=false;this.size=[720,550];this.resizable=true;this.panel=new BrowserPanel(this);
+        this.addDOMWidget('browser','healingarty-browser',this.panel.root,{serialize:false,hideOnZoom:false,getMinHeight:()=>280,getHeight:()=> '100%'});
+        this.setSize([720,550]);
       }
       onRemoved(){this.panel?.destroy();}
     }
