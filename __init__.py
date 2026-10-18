@@ -139,3 +139,30 @@ async def open_folder(request):
     except OSError as exc:
         raise web.HTTPBadRequest(text=str(exc)) from exc
     return web.json_response({'ok': True})
+
+
+def folder_tree(raw, offset=0):
+    path = Path(raw or folder_paths.get_input_directory()).expanduser().resolve(strict=True)
+    if not path.is_dir():
+        raise ValueError('폴더 경로를 입력하세요.')
+    children = []
+    with os.scandir(path) as scan:
+        for entry in scan:
+            try:
+                if entry.is_dir():
+                    children.append({'name': entry.name, 'path': str(path / entry.name)})
+            except OSError:
+                continue
+    children.sort(key=lambda item: item['name'].casefold())
+    chain = [*reversed(path.parents), path]
+    return {'path': str(path), 'ancestors': [{'path': str(p), 'name': p.name or str(p)} for p in chain],
+            'children': children[offset:offset+120], 'next': offset+120 if offset+120 < len(children) else None}
+
+
+@routes.get('/healingarty/browser/folders')
+async def get_folder_tree(request):
+    try:
+        offset = max(0, int(request.query.get('offset', 0)))
+    except ValueError:
+        raise web.HTTPBadRequest(text='잘못된 페이지 값')
+    return web.json_response(await guarded(folder_tree, request.query.get('path', ''), offset))
