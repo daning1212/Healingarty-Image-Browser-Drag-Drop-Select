@@ -166,3 +166,52 @@ async def get_folder_tree(request):
     except ValueError:
         raise web.HTTPBadRequest(text='잘못된 페이지 값')
     return web.json_response(await guarded(folder_tree, request.query.get('path', ''), offset))
+
+
+class HealingartyImageBrowser:
+    """Read the selected original image only when its IMAGE output executes."""
+    CATEGORY = 'Healingarty'
+    RETURN_TYPES = ('IMAGE',)
+    RETURN_NAMES = ('IMAGE',)
+    FUNCTION = 'load_selected'
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {'required': {'selected_path': ('STRING', {'default': '', 'multiline': False})}}
+
+    @classmethod
+    def VALIDATE_INPUTS(cls, selected_path):
+        if not selected_path:
+            return '탐색기에서 사용할 이미지를 먼저 클릭하세요.'
+        try:
+            image_path(selected_path)
+            return True
+        except (OSError, ValueError) as exc:
+            return str(exc)
+
+    @classmethod
+    def IS_CHANGED(cls, selected_path):
+        try:
+            digest = hashlib.sha256()
+            with image_path(selected_path).open('rb') as stream:
+                for block in iter(lambda: stream.read(1024 * 1024), b''):
+                    digest.update(block)
+            return digest.hexdigest()
+        except (OSError, ValueError):
+            return float('nan')
+
+    def load_selected(self, selected_path):
+        import numpy as np
+        import torch
+        path = image_path(selected_path)
+        with Image.open(path) as original:
+            # Still image output: animated/multipage files use the first frame.
+            img = ImageOps.exif_transpose(original)
+            if img.mode == 'I':
+                img = img.point(lambda value: value * (1 / 255))
+            pixels = np.asarray(img.convert('RGB'), dtype=np.float32) / 255.0
+            return (torch.from_numpy(pixels).unsqueeze(0),)
+
+
+NODE_CLASS_MAPPINGS['Healingarty/ImageBrowser'] = HealingartyImageBrowser
+NODE_DISPLAY_NAME_MAPPINGS['Healingarty/ImageBrowser'] = 'Healingarty Image Browser — Drag, Drop & Select'

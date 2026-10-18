@@ -43,6 +43,28 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(len(self.module.folder_tree(str(folder),120)['children']),5)
         child=self.module.folder_tree(str(folder/'folder000'))
         self.assertEqual(child['ancestors'][-2]['path'],str(folder))
+    def test_selected_output_and_cache_changes(self):
+        import numpy as np
+        source=self.base/'selected.png';Image.new('RGB',(4,3),(255,0,0)).save(source)
+        cls=self.module.HealingartyImageBrowser
+        self.assertEqual(cls.RETURN_TYPES,('IMAGE',))
+        self.assertTrue(cls.VALIDATE_INPUTS(str(source)))
+        self.assertIsInstance(cls.VALIDATE_INPUTS(''),str)
+        before=cls.IS_CHANGED(str(source))
+        class Tensor:
+            def __init__(self,array): self.array=array
+            def unsqueeze(self,axis): return np.expand_dims(self.array,axis)
+        prior=sys.modules.get('torch')
+        sys.modules['torch']=types.SimpleNamespace(from_numpy=Tensor)
+        try:
+            result=cls().load_selected(str(source))[0]
+            self.assertEqual(result.shape,(1,3,4,3))
+            np.testing.assert_array_equal(result[0,0,0],[1,0,0])
+        finally:
+            if prior is None: sys.modules.pop('torch',None)
+            else: sys.modules['torch']=prior
+        Image.new('RGB',(4,3),'blue').save(source)
+        self.assertNotEqual(before,cls.IS_CHANGED(str(source)))
     def test_thumbnail_and_non_destructive_import(self):
         source=self.base/'한글.png';Image.new('RGB',(640,480),'red').save(source)
         before=source.read_bytes()

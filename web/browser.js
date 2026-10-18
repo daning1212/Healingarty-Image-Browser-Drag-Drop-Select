@@ -17,13 +17,13 @@ function button(text, action) { const b=el('button','',text); b.type='button'; b
 
 class BrowserPanel {
   constructor(node) {
-    this.tree=new Map();this.treeRoots=[];this.expanded=new Set();this.treeLoading=new Set();this.node=node; this.path=''; this.parent=''; this.history=[]; this.next=null; this.generation=0; this.urls=new Set(); this.queue=[]; this.active=0;
+    this.tree=new Map();this.treeRoots=[];this.expanded=new Set();this.treeLoading=new Set();this.selectedPath=node.widgets?.find(w=>w.name==='selected_path')?.value||'';this.node=node; this.path=''; this.parent=''; this.history=[]; this.next=null; this.generation=0; this.urls=new Set(); this.queue=[]; this.active=0;
     this.root=el('div','ha-browser');
     const tools=el('div','ha-tools'); this.input=el('input'); this.input.placeholder='D:\\이미지 또는 /home/user/pictures';
     this.input.onkeydown=e=>{if(e.key==='Enter')this.navigate(this.input.value);};
     tools.append(button('←',()=>this.back()),button('↑',()=>this.navigate(this.parent)),button('⟳',()=>this.navigate(this.path,false)),this.input,button('이동',()=>this.navigate(this.input.value)));
     const actions=el('div','ha-tools');
-    actions.append(el('span','ha-version','v0.1.3'),button('현재 경로 열기',()=>this.open()),button('경로 지정',()=>{this.picker.hidden=!this.picker.hidden;}),button('☆ 즐겨찾기',()=>this.favorite()));
+    actions.append(el('span','ha-version','v0.2.0'),button('현재 경로 열기',()=>this.open()),button('경로 지정',()=>{this.picker.hidden=!this.picker.hidden;}),button('☆ 즐겨찾기',()=>this.favorite()));
     this.search=el('input'); this.search.placeholder='파일명 검색'; let timer;
     this.search.oninput=()=>{clearTimeout(timer);timer=setTimeout(()=>this.navigate(this.path,false),250);};
     const size=el('input');size.type='range';size.min=80;size.max=220;size.value=read('size',120);size.title='썸네일 크기';
@@ -58,10 +58,18 @@ class BrowserPanel {
   }
   append(data){this.next=data.next;this.more.hidden=this.next===null;for(const item of data.items){
     if(item.directory)continue;
-    const card=el('div','ha-card');card.item=item;card.draggable=true;
+    const card=el('div','ha-card');card.item=item;card.draggable=true;card.tabIndex=0;card.setAttribute('role','button');card.setAttribute('aria-label',item.name);this.markSelected(card);card.onclick=()=>this.selectImage(item.path);card.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();this.selectImage(item.path);}};
     const img=el('img');img.draggable=false;img.alt=item.name;const name=el('div','ha-name',item.name);name.title=item.name;const info=el('div','ha-info','… · '+item.name.split('.').pop().toUpperCase());
-    card.append(img,name,info);card.ondragstart=e=>{e.dataTransfer.setData(MIME,item.path);e.dataTransfer.effectAllowed='copy';};this.grid.append(card);this.observer.observe(card);
+    card.append(img,name,info);card.ondragstart=e=>{this.selectImage(item.path);e.dataTransfer.setData(MIME,item.path);e.dataTransfer.effectAllowed='copy';};this.grid.append(card);this.observer.observe(card);
   }}
+  markSelected(card){const selected=card.item.path===this.selectedPath;card.classList.toggle('ha-selected',selected);card.setAttribute('aria-pressed',String(selected));}
+  selectImage(path){
+    this.selectedPath=path;const widget=this.node.widgets?.find(w=>w.name==='selected_path');
+    if(widget){const old=widget.value;widget.value=path;widget.callback?.(path);this.node.onWidgetChanged?.('selected_path',path,old,widget);}
+    for(const card of this.grid.children)this.markSelected(card);
+    this.status.textContent='선택: '+path+' · IMAGE 출력 연결 후 생성 / Load Image로 드래그';this.status.title=path;
+    this.node.graph?.change?.();app.canvas.setDirty(true,true);
+  }
   treeEntry(path,name){if(!this.tree.has(path))this.tree.set(path,{path,name,children:[],loaded:false,next:null});return this.tree.get(path);}
   async loadTree(path,offset=0){
     if(this.treeLoading.has(path))return;this.treeLoading.add(path);
@@ -128,22 +136,30 @@ app.registerExtension({
       }catch(error){console.error('[Healingarty browser]',error);window.alert('이미지 적용 실패: '+error.message);}
     },true);
   },
-  registerCustomNodes(){
-    class ImageBrowser extends LiteGraph.LGraphNode {
-      constructor(){super('Healingarty Image Browser');this.isVirtualNode=true;this.serialize_widgets=false;this.size=[720,550];this.resizable=true;this.panel=new BrowserPanel(this);
-        this.addDOMWidget('browser','healingarty-browser',this.panel.root,{serialize:false,hideOnZoom:false,selectOn:[],getMinHeight:()=>280,getHeight:()=> '100%',onDraw:()=>this.syncPanelSize(),afterResize:()=>this.syncPanelSize()});
-        this.setSize([720,550]);this.syncPanelSize();
-      }
-      syncPanelSize(){
-        if(!this.panel)return;
-        const width=Math.max(320,this.size[0]-20)+'px';
-        const height=Math.max(280,this.size[1]-35)+'px';
+  beforeRegisterNodeDef(nodeType,nodeData){
+    if(nodeData.name!==TYPE)return;
+    const created=nodeType.prototype.onNodeCreated;
+    nodeType.prototype.onNodeCreated=function(){
+      const result=created?.apply(this,arguments);
+      // This is now an executable backend node with a real IMAGE output.
+      this.isVirtualNode=false;this.resizable=true;
+      const selected=this.widgets?.find(w=>w.name==='selected_path');
+      if(selected){selected.type='hidden';selected.computeSize=()=>[0,-4];selected.draw=()=>{};}
+      this.panel=new BrowserPanel(this);
+      this.syncPanelSize=()=>{
         const style=this.panel.root.style;
+        const width=Math.max(320,this.size[0]-20)+'px';
+        const height=Math.max(280,this.size[1]-55)+'px';
         if(style.width!==width)style.width=width;
         if(style.height!==height)style.height=height;
-      }
-      onRemoved(){this.panel?.destroy();}
-    }
-    ImageBrowser.title='Healingarty Image Browser';ImageBrowser.category='Healingarty';LiteGraph.registerNodeType(TYPE,ImageBrowser);
+      };
+      this.addDOMWidget('browser','healingarty-browser',this.panel.root,{serialize:false,hideOnZoom:false,selectOn:[],getMinHeight:()=>280,getHeight:()=> '100%',onDraw:()=>this.syncPanelSize(),afterResize:()=>this.syncPanelSize()});
+      this.setSize([720,570]);this.syncPanelSize();
+      return result;
+    };
+    const configured=nodeType.prototype.onConfigure;
+    nodeType.prototype.onConfigure=function(){const result=configured?.apply(this,arguments);if(this.panel){this.panel.selectedPath=this.widgets?.find(w=>w.name==='selected_path')?.value||'';for(const card of this.panel.grid.children)this.panel.markSelected(card);}return result;};
+    const removed=nodeType.prototype.onRemoved;
+    nodeType.prototype.onRemoved=function(){this.panel?.destroy();return removed?.apply(this,arguments);};
   }
 });
