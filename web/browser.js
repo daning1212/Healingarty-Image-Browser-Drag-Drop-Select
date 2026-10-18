@@ -15,6 +15,11 @@ async function request(route, params, post=false, signal) {
 function el(tag, cls, text) { const e=document.createElement(tag); if(cls)e.className=cls; if(text)e.textContent=text; return e; }
 function button(text, action) { const b=el('button','',text); b.type='button'; b.onclick=action; return b; }
 
+function previewSize(naturalWidth,naturalHeight,thumbWidth,thumbHeight,viewWidth,viewHeight){
+  const scale=Math.min(thumbWidth*6/naturalWidth,thumbHeight*6/naturalHeight,Math.max(1,viewWidth-36)*0.8/naturalWidth,Math.max(1,viewHeight-80)*0.85/naturalHeight);
+  return [Math.max(1,Math.round(naturalWidth*scale)),Math.max(1,Math.round(naturalHeight*scale))];
+}
+
 class BrowserPanel {
   constructor(node) {
     this.tree=new Map();this.treeRoots=[];this.expanded=new Set();this.treeLoading=new Set();this.selectedPath=node.widgets?.find(w=>w.name==='selected_path')?.value||'';this.node=node; this.path=''; this.parent=''; this.history=[]; this.next=null; this.generation=0; this.urls=new Set(); this.queue=[]; this.active=0;
@@ -23,7 +28,7 @@ class BrowserPanel {
     this.input.onkeydown=e=>{if(e.key==='Enter')this.navigate(this.input.value);};
     tools.append(button('←',()=>this.back()),button('↑',()=>this.navigate(this.parent)),button('⟳',()=>this.navigate(this.path,false)),this.input,button('이동',()=>this.navigate(this.input.value)));
     const actions=el('div','ha-tools');
-    actions.append(el('span','ha-version','v0.2.0'),button('현재 경로 열기',()=>this.open()),button('경로 지정',()=>{this.picker.hidden=!this.picker.hidden;}),button('☆ 즐겨찾기',()=>this.favorite()));
+    actions.append(el('span','ha-version','v0.2.1'),button('현재 경로 열기',()=>this.open()),button('경로 지정',()=>{this.picker.hidden=!this.picker.hidden;}),button('☆ 즐겨찾기',()=>this.favorite()));
     this.search=el('input'); this.search.placeholder='파일명 검색'; let timer;
     this.search.oninput=()=>{clearTimeout(timer);timer=setTimeout(()=>this.navigate(this.path,false),250);};
     const size=el('input');size.type='range';size.min=80;size.max=220;size.value=read('size',120);size.title='썸네일 크기';
@@ -38,6 +43,9 @@ class BrowserPanel {
     for(const event of ['pointerdown','mousedown','pointerup','mouseup','click','dblclick','wheel','keydown'])this.root.addEventListener(event,e=>e.stopPropagation());
     this.observer=new IntersectionObserver(entries=>{for(const entry of entries)if(entry.isIntersecting){this.observer.unobserve(entry.target);this.queue.push({card:entry.target,generation:this.generation});}this.pump();},{root:this.scroller,rootMargin:'120px'});
     request('roots',{}).then(data=>{for(const path of data.roots){this.roots.append(button(path,()=>this.navigate(path)));this.treeEntry(path,path);if(!this.treeRoots.includes(path))this.treeRoots.push(path);}this.renderTree();}).catch(e=>this.error(e));
+    this.scroller.addEventListener('scroll',()=>this.hidePreview(),{passive:true});
+    this.onPreviewKey=e=>{if(e.key==='Escape')this.hidePreview();};
+    this.onPreviewBlur=()=>this.hidePreview();document.addEventListener('keydown',this.onPreviewKey);window.addEventListener('blur',this.onPreviewBlur);
     this.navigate(read('path',''));
   }
   error(e){if(e.name!=='AbortError')this.status.textContent=e.message;}
@@ -46,7 +54,7 @@ class BrowserPanel {
   async open(){if(!this.path)return;try{await request('open',{path:this.path},true);this.status.textContent='ComfyUI 실행 컴퓨터에서 폴더를 열었습니다.';}catch(e){this.error(e);}}
   back(){const path=this.history.pop();if(path!==undefined)this.navigate(path,false);}
   async navigate(path, remember=true){
-    const generation=++this.generation;this.controller?.abort();this.controller=new AbortController();this.queue=[];this.observer.disconnect();
+    this.hidePreview();const generation=++this.generation;this.controller?.abort();this.controller=new AbortController();this.queue=[];this.observer.disconnect();
     this.status.textContent='폴더 읽는 중…';this.more.disabled=true;
     try{
       const data=await request('list',{path,q:this.search.value},false,this.controller.signal);if(generation!==this.generation)return;
@@ -60,8 +68,42 @@ class BrowserPanel {
     if(item.directory)continue;
     const card=el('div','ha-card');card.item=item;card.draggable=true;card.tabIndex=0;card.setAttribute('role','button');card.setAttribute('aria-label',item.name);this.markSelected(card);card.onclick=()=>this.selectImage(item.path);card.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();this.selectImage(item.path);}};
     const img=el('img');img.draggable=false;img.alt=item.name;const name=el('div','ha-name',item.name);name.title=item.name;const info=el('div','ha-info','… · '+item.name.split('.').pop().toUpperCase());
-    card.append(img,name,info);card.ondragstart=e=>{this.selectImage(item.path);e.dataTransfer.setData(MIME,item.path);e.dataTransfer.effectAllowed='copy';};this.grid.append(card);this.observer.observe(card);
+    card.append(img,name,info);card.onmouseenter=()=>this.schedulePreview(card);card.onmouseleave=()=>this.hidePreview();
+    card.ondragstart=e=>{this.hidePreview();this.selectImage(item.path);e.dataTransfer.setData(MIME,item.path);e.dataTransfer.effectAllowed='copy';};this.grid.append(card);this.observer.observe(card);
   }}
+  schedulePreview(card){
+    this.hidePreview();this.previewCard=card;
+    this.previewTimer=setTimeout(()=>this.showPreview(card),400);
+  }
+  hidePreview(){
+    clearTimeout(this.previewTimer);this.previewCard=null;this.previewController?.abort();
+    if(this.previewURL){URL.revokeObjectURL(this.previewURL);this.previewURL=null;}
+    this.previewElement?.remove();this.previewElement=null;
+  }
+  async showPreview(card){
+    if(this.previewCard!==card||!card.isConnected)return;
+    const controller=new AbortController();this.previewController=controller;
+    try{
+      const response=await api.fetchApi('/healingarty/browser/preview?'+new URLSearchParams({path:card.item.path}),{signal:controller.signal});
+      if(!response.ok)throw new Error('확대 미리보기 실패');const blob=await response.blob();
+      if(this.previewCard!==card||controller.signal.aborted)return;
+      const url=URL.createObjectURL(blob);this.previewURL=url;
+      const image=el('img');image.alt=card.item.name;
+      image.onload=()=>{
+        if(this.previewCard!==card||controller.signal.aborted)return;
+        const rect=card.querySelector('img').getBoundingClientRect();
+        const [width,height]=previewSize(image.naturalWidth,image.naturalHeight,rect.width,rect.height,window.innerWidth,window.innerHeight);
+        const box=el('div','ha-hover-preview');box.setAttribute('role','tooltip');
+        image.style.width=width+'px';image.style.height=height+'px';
+        const info=el('div','ha-hover-caption',card.item.name+' · '+response.headers.get('X-Image-Width')+' × '+response.headers.get('X-Image-Height'));
+        box.append(image,info);box.style.width=(width+12)+'px';
+        const right=rect.right+16;const left=right+width+12<=window.innerWidth-12?right:Math.max(12,rect.left-width-28);
+        box.style.left=left+'px';box.style.top=Math.max(12,Math.min(rect.top,window.innerHeight-height-58))+'px';
+        this.previewElement=box;document.body.append(box);
+      };
+      image.onerror=()=>{if(this.previewCard===card)this.hidePreview();};image.src=url;
+    }catch(e){if(e.name!=='AbortError')console.warn('[Healingarty preview]',e.message);}
+  }
   markSelected(card){const selected=card.item.path===this.selectedPath;card.classList.toggle('ha-selected',selected);card.setAttribute('aria-pressed',String(selected));}
   selectImage(path){
     this.selectedPath=path;const widget=this.node.widgets?.find(w=>w.name==='selected_path');
@@ -111,7 +153,7 @@ class BrowserPanel {
     const blob=await response.blob();if(generation!==this.generation||!card.isConnected)return;const url=URL.createObjectURL(blob);this.urls.add(url);card.querySelector('img').src=url;
     card.querySelector('.ha-info').textContent=`${response.headers.get('X-Image-Width')} × ${response.headers.get('X-Image-Height')} · ${card.item.name.split('.').pop().toUpperCase()}`;
   }catch(e){if(generation===this.generation&&e.name!=='AbortError')card.querySelector('.ha-info').textContent='읽기 실패';}}
-  destroy(){this.generation++;this.controller?.abort();this.observer.disconnect();this.queue=[];for(const url of this.urls)URL.revokeObjectURL(url);}
+  destroy(){this.hidePreview();document.removeEventListener('keydown',this.onPreviewKey);window.removeEventListener('blur',this.onPreviewBlur);this.generation++;this.controller?.abort();this.observer.disconnect();this.queue=[];for(const url of this.urls)URL.revokeObjectURL(url);}
 }
 
 app.registerExtension({

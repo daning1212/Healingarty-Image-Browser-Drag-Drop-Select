@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 let source=readFileSync(new URL('../web/browser.js',import.meta.url),'utf8');
 source=source.replace(/^import .*;\n/gm,'').replace('import.meta.url',"'https://localhost/browser.js'");
 let extension;const graph={change(){this.changed=true;}};
-const context={app:{registerExtension:e=>extension=e,canvas:{setDirty(){} }},api:{},localStorage:{getItem:()=>null},URL,console};
+const context={app:{registerExtension:e=>extension=e,canvas:{setDirty(){} }},api:{},localStorage:{getItem:()=>null},URL,console,clearTimeout,setTimeout};
 vm.createContext(context);vm.runInContext(source,context);
 vm.runInContext('globalThis.RealPanel=BrowserPanel;BrowserPanel=class {constructor(){this.root={style:{}};this.grid={children:[]};}destroy(){this.destroyed=true;}};',context);
 class Node {constructor(){this.widgets=[{name:'selected_path',value:'D:/a.png'}];this.size=[200,100];this.graph=graph;this.onNodeCreated();}addDOMWidget(n,t,e,options){this.dom={options};}setSize(size){this.size=size;}}
@@ -17,3 +17,9 @@ panel.selectImage('D:/selected.png');assert.equal(node.widgets[0].value,'D:/sele
 panel.selectImage('D:/other.png');assert.equal(card['aria-pressed'],'false');assert.ok(!classes.has('ha-selected'));
 node.onConfigure();assert.equal(node.panel.selectedPath,'D:/other.png');node.onRemoved();assert.equal(node.panel.destroyed,true);
 console.log('Selection, highlight, serialized path widget, restore, sizing and cleanup checks passed.');
+vm.runInContext('globalThis.previewSizeForTest=previewSize',context);
+let [w,h]=context.previewSizeForTest(1000,500,100,100,4000,3000);assert.equal(w,600);assert.equal(h,300);
+[w,h]=context.previewSizeForTest(500,1000,100,100,400,300);assert.ok(w<=364*.8);assert.ok(h<=220*.85+1);assert.ok(Math.abs(w/h-.5)<.02);
+const actual=context.RealPanel.prototype;let removed=false,aborted=false;
+const hover={previewTimer:undefined,previewCard:{},previewController:{abort(){aborted=true;}},previewElement:{remove(){removed=true;}}};actual.hidePreview.call(hover);assert.ok(removed&&aborted);assert.equal(hover.previewCard,null);
+console.log('Hover sizing, aspect ratio, viewport cap and cancellation checks passed.');

@@ -65,6 +65,13 @@ class BackendTests(unittest.TestCase):
             else: sys.modules['torch']=prior
         Image.new('RGB',(4,3),'blue').save(source)
         self.assertNotEqual(before,cls.IS_CHANGED(str(source)))
+    def test_large_preview_uses_original_and_caps_resolution(self):
+        source=self.base/'large.png';Image.new('RGB',(3000,1500),'green').save(source)
+        data,width,height=self.module.large_preview(str(source))
+        self.assertEqual((width,height),(3000,1500))
+        import io
+        with Image.open(io.BytesIO(data)) as preview:
+            self.assertEqual(preview.size,(2048,1024))
     def test_thumbnail_and_non_destructive_import(self):
         source=self.base/'한글.png';Image.new('RGB',(640,480),'red').save(source)
         before=source.read_bytes()

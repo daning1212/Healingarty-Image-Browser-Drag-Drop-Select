@@ -215,3 +215,21 @@ class HealingartyImageBrowser:
 
 NODE_CLASS_MAPPINGS['Healingarty/ImageBrowser'] = HealingartyImageBrowser
 NODE_DISPLAY_NAME_MAPPINGS['Healingarty/ImageBrowser'] = 'Healingarty Image Browser — Drag, Drop & Select'
+
+
+
+def large_preview(raw):
+    path = image_path(raw)
+    with Image.open(path) as original:
+        img = ImageOps.exif_transpose(original)
+        width, height = img.size
+        img.thumbnail((2048, 2048))
+        buffer = io.BytesIO()
+        img.convert('RGB').save(buffer, 'JPEG', quality=92)
+    return buffer.getvalue(), width, height
+
+
+@routes.get('/healingarty/browser/preview')
+async def get_large_preview(request):
+    data, width, height = await guarded(large_preview, request.query.get('path', ''))
+    return web.Response(body=data, content_type='image/jpeg', headers={'X-Image-Width': str(width), 'X-Image-Height': str(height), 'Cache-Control': 'no-store'})
