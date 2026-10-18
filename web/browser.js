@@ -23,7 +23,7 @@ class BrowserPanel {
     this.input.onkeydown=e=>{if(e.key==='Enter')this.navigate(this.input.value);};
     tools.append(button('←',()=>this.back()),button('↑',()=>this.navigate(this.parent)),button('⟳',()=>this.navigate(this.path,false)),this.input,button('이동',()=>this.navigate(this.input.value)));
     const actions=el('div','ha-tools');
-    actions.append(button('현재 경로 열기',()=>this.open()),button('경로 지정',()=>{this.picker.hidden=!this.picker.hidden;}),button('☆ 즐겨찾기',()=>this.favorite()));
+    actions.append(el('span','ha-version','v0.1.2'),button('현재 경로 열기',()=>this.open()),button('경로 지정',()=>{this.picker.hidden=!this.picker.hidden;}),button('☆ 즐겨찾기',()=>this.favorite()));
     this.search=el('input'); this.search.placeholder='파일명 검색'; let timer;
     this.search.oninput=()=>{clearTimeout(timer);timer=setTimeout(()=>this.navigate(this.path,false),250);};
     const size=el('input');size.type='range';size.min=80;size.max=220;size.value=read('size',120);size.title='썸네일 크기';
@@ -35,7 +35,7 @@ class BrowserPanel {
     const body=el('div','ha-body');this.folders=el('div','ha-folders');this.scroller=el('div','ha-scroll');this.grid=el('div','ha-grid');this.more=button('더 불러오기',()=>this.loadMore());this.scroller.append(this.grid,this.more);body.append(this.folders,this.scroller);
     this.status=el('div','ha-status','이미지를 기존 Load Image 노드로 드래그하세요.');
     this.root.append(tools,actions,this.picker,this.favorites,body,this.status);
-    for(const event of ['pointerdown','mousedown','wheel','keydown'])this.root.addEventListener(event,e=>e.stopPropagation());
+    for(const event of ['pointerdown','mousedown','pointerup','mouseup','click','dblclick','wheel','keydown'])this.root.addEventListener(event,e=>e.stopPropagation());
     this.observer=new IntersectionObserver(entries=>{for(const entry of entries)if(entry.isIntersecting){this.observer.unobserve(entry.target);this.queue.push({card:entry.target,generation:this.generation});}this.pump();},{root:this.scroller,rootMargin:'120px'});
     request('roots',{}).then(data=>{for(const path of data.roots)this.roots.append(button(path,()=>this.navigate(path)));}).catch(e=>this.error(e));
     this.navigate(read('path',''));
@@ -75,7 +75,7 @@ class BrowserPanel {
 app.registerExtension({
   name:'Healingarty.ImageBrowser',
   async setup(){
-    const style=el('link');style.rel='stylesheet';style.href=new URL('./browser.css',import.meta.url).href;document.head.append(style);
+    const style=el('link');style.rel='stylesheet';style.href=new URL('./browser.css?v=0.1.2',import.meta.url).href;document.head.append(style);
     // Capture only our private MIME: never invoke ComfyUI's PNG workflow loader.
     const own=e=>Array.from(e.dataTransfer?.types??[]).includes(MIME);
     document.addEventListener('dragover',e=>{if(own(e)){e.preventDefault();e.stopImmediatePropagation();e.dataTransfer.dropEffect='copy';}},true);
@@ -97,8 +97,16 @@ app.registerExtension({
   registerCustomNodes(){
     class ImageBrowser extends LiteGraph.LGraphNode {
       constructor(){super('Healingarty Image Browser');this.isVirtualNode=true;this.serialize_widgets=false;this.size=[720,550];this.resizable=true;this.panel=new BrowserPanel(this);
-        this.addDOMWidget('browser','healingarty-browser',this.panel.root,{serialize:false,hideOnZoom:false,getMinHeight:()=>280,getHeight:()=> '100%'});
-        this.setSize([720,550]);
+        this.addDOMWidget('browser','healingarty-browser',this.panel.root,{serialize:false,hideOnZoom:false,selectOn:[],getMinHeight:()=>280,getHeight:()=> '100%',onDraw:()=>this.syncPanelSize(),afterResize:()=>this.syncPanelSize()});
+        this.setSize([720,550]);this.syncPanelSize();
+      }
+      syncPanelSize(){
+        if(!this.panel)return;
+        const width=Math.max(320,this.size[0]-20)+'px';
+        const height=Math.max(280,this.size[1]-35)+'px';
+        const style=this.panel.root.style;
+        if(style.width!==width)style.width=width;
+        if(style.height!==height)style.height=height;
       }
       onRemoved(){this.panel?.destroy();}
     }
