@@ -32,6 +32,17 @@ class BackendTests(unittest.TestCase):
         self.assertTrue(data['items'][0]['directory'])
         self.assertEqual(data['next'],2)
         self.assertEqual(len(self.module.browse(str(folder),query='3')['items']),1)
+    def test_persistent_tree_ancestors_and_pagination(self):
+        folder=self.base/'tree';folder.mkdir(exist_ok=True)
+        for i in range(125): (folder/f'folder{i:03}').mkdir(exist_ok=True)
+        (folder/'image.png').touch()
+        data=self.module.folder_tree(str(folder))
+        self.assertEqual(data['ancestors'][-1]['path'],str(folder))
+        self.assertEqual(len(data['children']),120)
+        self.assertEqual(data['next'],120)
+        self.assertEqual(len(self.module.folder_tree(str(folder),120)['children']),5)
+        child=self.module.folder_tree(str(folder/'folder000'))
+        self.assertEqual(child['ancestors'][-2]['path'],str(folder))
     def test_thumbnail_and_non_destructive_import(self):
         source=self.base/'한글.png';Image.new('RGB',(640,480),'red').save(source)
         before=source.read_bytes()
