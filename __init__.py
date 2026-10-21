@@ -2,6 +2,8 @@
 import asyncio
 import hashlib
 import io
+import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -171,46 +173,95 @@ async def get_folder_tree(request):
 class HealingartyImageBrowser:
     """Read the selected original image only when its IMAGE output executes."""
     CATEGORY = 'Healingarty'
-    RETURN_TYPES = ('IMAGE',)
-    RETURN_NAMES = ('IMAGE',)
+    RETURN_TYPES = ('IMAGE', 'IMAGE')
+    RETURN_NAMES = ('IMAGE', 'CROP IMAGE')
     FUNCTION = 'load_selected'
 
     @classmethod
     def INPUT_TYPES(cls):
-        return {'required': {'selected_path': ('STRING', {'default': '', 'multiline': False})}}
+        return {'required': {'selected_path': ('STRING', {'default': '', 'multiline': False})},
+                'optional': {'crop_state': ('STRING', {'default': '', 'multiline': False})}}
 
     @classmethod
-    def VALIDATE_INPUTS(cls, selected_path):
-        if not selected_path:
+    def VALIDATE_INPUTS(cls, selected_path, crop_state=''):
+        if not selected_path and not crop_state:
             return '탐색기에서 사용할 이미지를 먼저 클릭하세요.'
         try:
-            image_path(selected_path)
+            if selected_path:
+                image_path(selected_path)
+            state = parse_crop_state(crop_state)
+            if state:
+                image_path(state['path'])
             return True
         except (OSError, ValueError) as exc:
             return str(exc)
 
     @classmethod
-    def IS_CHANGED(cls, selected_path):
+    def IS_CHANGED(cls, selected_path, crop_state=''):
         try:
             digest = hashlib.sha256()
-            with image_path(selected_path).open('rb') as stream:
-                for block in iter(lambda: stream.read(1024 * 1024), b''):
-                    digest.update(block)
+            state = parse_crop_state(crop_state)
+            digest.update(crop_state.encode())
+            for raw in dict.fromkeys([selected_path or state['path'], *([state['path']] if state else [])]):
+                with image_path(raw).open('rb') as stream:
+                    for block in iter(lambda: stream.read(1024 * 1024), b''):
+                        digest.update(block)
             return digest.hexdigest()
         except (OSError, ValueError):
             return float('nan')
 
-    def load_selected(self, selected_path):
+    def load_selected(self, selected_path, crop_state=''):
         import numpy as np
         import torch
-        path = image_path(selected_path)
-        with Image.open(path) as original:
-            # Still image output: animated/multipage files use the first frame.
-            img = ImageOps.exif_transpose(original)
-            if img.mode == 'I':
-                img = img.point(lambda value: value * (1 / 255))
-            pixels = np.asarray(img.convert('RGB'), dtype=np.float32) / 255.0
-            return (torch.from_numpy(pixels).unsqueeze(0),)
+        state = parse_crop_state(crop_state)
+        def read_image(raw):
+            with Image.open(image_path(raw)) as original:
+                img = ImageOps.exif_transpose(original)
+                if img.mode == 'I':
+                    img = img.point(lambda value: value * (1 / 255))
+                return img.convert('RGB')
+        def tensor(img):
+            pixels = np.asarray(img, dtype=np.float32) / 255.0
+            return torch.from_numpy(pixels).unsqueeze(0)
+        original = read_image(selected_path or state['path'])
+        source = original if not state or state['path'] == selected_path else read_image(state['path'])
+        cropped = process_crop(source, state) if state else source
+        original_tensor = tensor(original)
+        return (original_tensor, tensor(cropped) if state else original_tensor)
+
+
+def parse_crop_state(raw):
+    if not raw:
+        return None
+    try:
+        state = json.loads(raw)
+        if not isinstance(state, dict) or not isinstance(state.get('path'), str) or not state['path']:
+            raise ValueError()
+        size, box = state['size'], state['box']
+        if len(size) != 2 or len(box) != 4 or any(type(v) is not int for v in [*size, *box]):
+            raise ValueError()
+        w, h = size
+        x, y, right, bottom = box
+        if not (w > 0 and h > 0 and 0 <= x < right <= w and 0 <= y < bottom <= h):
+            raise ValueError()
+        limit = state.get('max_edge', 0)
+        if type(limit) is not int or not 0 <= limit <= 32768:
+            raise ValueError()
+        return state
+    except (ValueError, TypeError, KeyError):
+        raise ValueError('크롭 설정이 잘못되었습니다. 이미지를 다시 불러오세요.') from None
+
+
+def process_crop(image, state):
+    if list(image.size) != state['size']:
+        raise ValueError('불러온 뒤 원본 해상도가 바뀌었습니다. 크롭 이미지를 다시 불러오세요.')
+    result = image.crop(tuple(state['box']))
+    limit = state.get('max_edge', 0)
+    if limit and max(result.size) > limit:
+        scale = limit / max(result.size)
+        size = tuple(max(1, math.floor(v * scale + 0.5)) for v in result.size)
+        result = result.resize(size, Image.Resampling.LANCZOS)
+    return result
 
 
 NODE_CLASS_MAPPINGS['Healingarty/ImageBrowser'] = HealingartyImageBrowser
