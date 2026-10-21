@@ -47,7 +47,7 @@ class BackendTests(unittest.TestCase):
         import numpy as np
         source=self.base/'selected.png';Image.new('RGB',(4,3),(255,0,0)).save(source)
         cls=self.module.HealingartyImageBrowser
-        self.assertEqual(cls.RETURN_TYPES,('IMAGE',))
+        self.assertEqual(cls.RETURN_TYPES,('IMAGE','IMAGE'))
         self.assertTrue(cls.VALIDATE_INPUTS(str(source)))
         self.assertIsInstance(cls.VALIDATE_INPUTS(''),str)
         before=cls.IS_CHANGED(str(source))
@@ -65,6 +65,52 @@ class BackendTests(unittest.TestCase):
             else: sys.modules['torch']=prior
         Image.new('RGB',(4,3),'blue').save(source)
         self.assertNotEqual(before,cls.IS_CHANGED(str(source)))
+    def test_crop_exact_pixels_resize_and_source_preserved(self):
+        import numpy as np
+        image = Image.fromarray(np.arange(8*6*3, dtype=np.uint8).reshape(6,8,3))
+        state = {'path':'source.png','size':[8,6],'box':[2,1,6,5],'max_edge':0}
+        before = image.tobytes()
+        cropped = self.module.process_crop(image,state)
+        self.assertEqual(cropped.size,(4,4))
+        self.assertEqual(cropped.getpixel((0,0)),image.getpixel((2,1)))
+        self.assertEqual(image.tobytes(),before)
+        state['max_edge']=2
+        self.assertEqual(self.module.process_crop(image,state).size,(2,2))
+        state['max_edge']=100
+        self.assertEqual(self.module.process_crop(image,state).size,(4,4))
+        state['size']=[9,6]
+        with self.assertRaises(ValueError): self.module.process_crop(image,state)
+
+    def test_crop_state_validation_and_independent_output(self):
+        import json
+        import numpy as np
+        a=self.base/'a.png';b=self.base/'b.png'
+        Image.new('RGB',(8,6),'red').save(a);Image.new('RGB',(10,20),'blue').save(b)
+        state={'path':str(b),'size':[10,20],'box':[2,2,8,18],'max_edge':8}
+        raw=json.dumps(state);cls=self.module.HealingartyImageBrowser
+        self.assertTrue(cls.VALIDATE_INPUTS(str(a),raw))
+        prior=sys.modules.get('torch')
+        class Tensor:
+            def __init__(self,array): self.array=array
+            def unsqueeze(self,axis): return np.expand_dims(self.array,axis)
+        sys.modules['torch']=types.SimpleNamespace(from_numpy=Tensor)
+        try:
+            original,crop=cls().load_selected(str(a),raw)
+            self.assertEqual(original.shape,(1,6,8,3));self.assertEqual(crop.shape,(1,8,3,3))
+            np.testing.assert_array_equal(crop[0,0,0],[0,0,1])
+            restored=cls().load_selected('',raw)
+            self.assertEqual(restored[1].shape,crop.shape)
+        finally:
+            if prior is None: sys.modules.pop('torch',None)
+            else: sys.modules['torch']=prior
+        before=cls.IS_CHANGED(str(a),raw)
+        Image.new('RGB',(10,20),'green').save(b)
+        self.assertNotEqual(before,cls.IS_CHANGED(str(a),raw))
+        state['box']=[0,0,0,1]
+        self.assertIsInstance(cls.VALIDATE_INPUTS(str(a),json.dumps(state)),str)
+        for invalid in ['[]','{}','null','{"path":"x","size":[1,1],"box":[0,0,1,1],"max_edge":-1}']:
+            with self.assertRaises(ValueError): self.module.parse_crop_state(invalid)
+
     def test_large_preview_uses_original_and_caps_resolution(self):
         source=self.base/'large.png';Image.new('RGB',(3000,1500),'green').save(source)
         data,width,height=self.module.large_preview(str(source))

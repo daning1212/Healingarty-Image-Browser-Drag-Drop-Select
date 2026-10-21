@@ -1,5 +1,6 @@
 import { app } from '../../scripts/app.js';
 import { api } from '../../scripts/api.js';
+import { CropEditor } from './crop.js';
 
 const TYPE = 'Healingarty/ImageBrowser';
 const MIME = 'application/x-healingarty-image';
@@ -28,7 +29,7 @@ class BrowserPanel {
     this.input.onkeydown=e=>{if(e.key==='Enter')this.navigate(this.input.value);};
     tools.append(button('←',()=>this.back()),button('↑',()=>this.navigate(this.parent)),button('⟳',()=>this.navigate(this.path,false)),this.input,button('이동',()=>this.navigate(this.input.value)));
     const actions=el('div','ha-tools');
-    actions.append(el('span','ha-version','v0.2.1'),button('현재 경로 열기',()=>this.open()),button('경로 지정',()=>{this.picker.hidden=!this.picker.hidden;}),button('☆ 즐겨찾기',()=>this.favorite()));
+    actions.append(el('span','ha-version','v0.3.0'),button('현재 경로 열기',()=>this.open()),button('경로 지정',()=>{this.picker.hidden=!this.picker.hidden;}),button('☆ 즐겨찾기',()=>this.favorite()));
     this.search=el('input'); this.search.placeholder='파일명 검색'; let timer;
     this.search.oninput=()=>{clearTimeout(timer);timer=setTimeout(()=>this.navigate(this.path,false),250);};
     const size=el('input');size.type='range';size.min=80;size.max=220;size.value=read('size',120);size.title='썸네일 크기';
@@ -39,7 +40,13 @@ class BrowserPanel {
     this.favorites=el('div','ha-tools');this.renderFavorites();
     const body=el('div','ha-body');this.folders=el('div','ha-folders');this.scroller=el('div','ha-scroll');this.grid=el('div','ha-grid');this.more=button('더 불러오기',()=>this.loadMore());this.scroller.append(this.grid,this.more);body.append(this.folders,this.scroller);
     this.status=el('div','ha-status','이미지를 기존 Load Image 노드로 드래그하세요.');
-    this.root.append(tools,actions,this.picker,this.favorites,body,this.status);
+    this.browserPane=el('div','ha-browser-pane');this.browserPane.append(tools,actions,this.picker,this.favorites,body,this.status);
+    this.workspace=el('div','ha-workspace');this.crop=new CropEditor(this);this.divider=el('div','ha-divider');this.divider.title='드래그하여 탐색기 너비 조절';
+    this.workspace.append(this.browserPane,this.divider,this.crop.root);this.root.append(this.workspace);
+    actions.append(button('크롭창 열기 / 접기',()=>this.toggleCrop(this.crop.root.hidden)));
+    this.divider.onpointerdown=e=>{e.preventDefault();this.divider.setPointerCapture(e.pointerId);};
+    this.divider.onpointermove=e=>{if(!this.divider.hasPointerCapture(e.pointerId))return;const rect=this.workspace.getBoundingClientRect();const fraction=Math.max(.3,Math.min(.7,(e.clientX-rect.left)/rect.width));this.browserPane.style.flexBasis=(fraction*100)+'%';};
+    this.divider.onpointerup=e=>{if(this.divider.hasPointerCapture(e.pointerId))this.divider.releasePointerCapture(e.pointerId);};
     for(const event of ['pointerdown','mousedown','pointerup','mouseup','click','dblclick','wheel','keydown'])this.root.addEventListener(event,e=>e.stopPropagation());
     this.observer=new IntersectionObserver(entries=>{for(const entry of entries)if(entry.isIntersecting){this.observer.unobserve(entry.target);this.queue.push({card:entry.target,generation:this.generation});}this.pump();},{root:this.scroller,rootMargin:'120px'});
     request('roots',{}).then(data=>{for(const path of data.roots){this.roots.append(button(path,()=>this.navigate(path)));this.treeEntry(path,path);if(!this.treeRoots.includes(path))this.treeRoots.push(path);}this.renderTree();}).catch(e=>this.error(e));
@@ -48,6 +55,7 @@ class BrowserPanel {
     this.onPreviewBlur=()=>this.hidePreview();document.addEventListener('keydown',this.onPreviewKey);window.addEventListener('blur',this.onPreviewBlur);
     this.navigate(read('path',''));
   }
+  toggleCrop(open){this.crop.root.hidden=!open;this.divider.hidden=!open;this.browserPane.style.flexBasis=open?'55%':'100%';if(open)this.crop.draw();}
   error(e){if(e.name!=='AbortError')this.status.textContent=e.message;}
   favorite(){if(!this.path)return;const values=read('favorites',[]);if(!values.includes(this.path))values.push(this.path);save('favorites',values);this.renderFavorites();}
   renderFavorites(){this.favorites.replaceChildren();for(const path of read('favorites',[])){const b=button('★ '+path,()=>this.navigate(path));b.title='클릭: 이동 / 우클릭: 즐겨찾기 해제';b.oncontextmenu=e=>{e.preventDefault();save('favorites',read('favorites',[]).filter(p=>p!==path));this.renderFavorites();};this.favorites.append(b);}}
@@ -153,13 +161,13 @@ class BrowserPanel {
     const blob=await response.blob();if(generation!==this.generation||!card.isConnected)return;const url=URL.createObjectURL(blob);this.urls.add(url);card.querySelector('img').src=url;
     card.querySelector('.ha-info').textContent=`${response.headers.get('X-Image-Width')} × ${response.headers.get('X-Image-Height')} · ${card.item.name.split('.').pop().toUpperCase()}`;
   }catch(e){if(generation===this.generation&&e.name!=='AbortError')card.querySelector('.ha-info').textContent='읽기 실패';}}
-  destroy(){this.hidePreview();document.removeEventListener('keydown',this.onPreviewKey);window.removeEventListener('blur',this.onPreviewBlur);this.generation++;this.controller?.abort();this.observer.disconnect();this.queue=[];for(const url of this.urls)URL.revokeObjectURL(url);}
+  destroy(){this.crop?.destroy();this.hidePreview();document.removeEventListener('keydown',this.onPreviewKey);window.removeEventListener('blur',this.onPreviewBlur);this.generation++;this.controller?.abort();this.observer.disconnect();this.queue=[];for(const url of this.urls)URL.revokeObjectURL(url);}
 }
 
 app.registerExtension({
   name:'Healingarty.ImageBrowser',
   async setup(){
-    const style=el('link');style.rel='stylesheet';style.href=new URL('./browser.css?v=0.1.2',import.meta.url).href;document.head.append(style);
+    const style=el('link');style.rel='stylesheet';style.href=new URL('./browser.css?v=0.3.0',import.meta.url).href;document.head.append(style);
     // Capture only our private MIME: never invoke ComfyUI's PNG workflow loader.
     const own=e=>Array.from(e.dataTransfer?.types??[]).includes(MIME);
     document.addEventListener('dragover',e=>{if(own(e)){e.preventDefault();e.stopImmediatePropagation();e.dataTransfer.dropEffect='copy';}},true);
@@ -185,8 +193,8 @@ app.registerExtension({
       const result=created?.apply(this,arguments);
       // This is now an executable backend node with a real IMAGE output.
       this.isVirtualNode=false;this.resizable=true;
-      const selected=this.widgets?.find(w=>w.name==='selected_path');
-      if(selected){selected.type='hidden';selected.computeSize=()=>[0,-4];selected.draw=()=>{};}
+      for(const name of ['selected_path','crop_state']){const selected=this.widgets?.find(w=>w.name===name);
+      if(selected){selected.type='hidden';selected.computeSize=()=>[0,-4];selected.draw=()=>{};}}
       this.panel=new BrowserPanel(this);
       this.syncPanelSize=()=>{
         const style=this.panel.root.style;
@@ -196,11 +204,11 @@ app.registerExtension({
         if(style.height!==height)style.height=height;
       };
       this.addDOMWidget('browser','healingarty-browser',this.panel.root,{serialize:false,hideOnZoom:false,selectOn:[],getMinHeight:()=>280,getHeight:()=> '100%',onDraw:()=>this.syncPanelSize(),afterResize:()=>this.syncPanelSize()});
-      this.setSize([720,570]);this.syncPanelSize();
+      this.setSize([1160,700]);this.syncPanelSize();
       return result;
     };
     const configured=nodeType.prototype.onConfigure;
-    nodeType.prototype.onConfigure=function(){const result=configured?.apply(this,arguments);if(this.panel){this.panel.selectedPath=this.widgets?.find(w=>w.name==='selected_path')?.value||'';for(const card of this.panel.grid.children)this.panel.markSelected(card);}return result;};
+    nodeType.prototype.onConfigure=function(){const result=configured?.apply(this,arguments);if(this.panel){this.panel.crop?.restore();this.panel.selectedPath=this.widgets?.find(w=>w.name==='selected_path')?.value||'';for(const card of this.panel.grid.children)this.panel.markSelected(card);}return result;};
     const removed=nodeType.prototype.onRemoved;
     nodeType.prototype.onRemoved=function(){this.panel?.destroy();return removed?.apply(this,arguments);};
   }
