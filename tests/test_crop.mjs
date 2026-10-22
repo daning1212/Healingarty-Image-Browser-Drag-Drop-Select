@@ -37,3 +37,39 @@ await editor.restore();assert.equal(editor.state.path,'a.png');equal(editor.stat
 editor.reset();equal(editor.state.box,[0,0,1200,2400]);assert.equal(editor.state.max_edge,1000);
 assert.ok(changed>0);editor.destroy();assert.equal(editor.image,null);
 console.log('Editor explicit load, independent image, failed-load preservation, persistence/restore, invalid resize input and cleanup checks passed.');
+
+// Pointer integration regression: all handles must work on BOTH sides of image bounds.
+const handlesEditor=new ui.Editor(panel);await handlesEditor.load('a.png');
+const modes=['nw','n','ne','e','se','s','sw','w'];
+const directions=[[-1,-1],[0,-1],[1,-1],[1,0],[1,1],[0,1],[-1,1],[-1,0]];
+for(const zoom of [.5,1,2]){
+  handlesEditor.canvas.getBoundingClientRect=()=>({left:30,top:40,width:400*zoom,height:500*zoom});
+  handlesEditor.syncScale();
+  const metrics=handlesEditor.screenMetrics();assert.equal(metrics.halfX*zoom,6);assert.equal(metrics.hitX*zoom,14);
+  for(let i=0;i<8;i++){
+    handlesEditor.reset();const [hx,hy]=handlesEditor.handles()[i],[dx,dy]=directions[i];
+    // This is outside the source image, but INSIDE the enlarged target (12 screen pixels away).
+    const px=hx+dx*12/zoom,py=hy+dy*12/zoom;
+    const event={button:0,pointerId:7,clientX:30+px*zoom,clientY:40+py*zoom,preventDefault(){}};
+    handlesEditor.move(event);assert.equal(handlesEditor.hoverMode,modes[i]);
+    handlesEditor.down(event);assert.equal(handlesEditor.drag?.mode,modes[i],`zoom ${zoom}, handle ${modes[i]}`);
+    // Resize into the image and verify the serialized source-pixel crop actually changes.
+    handlesEditor.move({...event,clientX:30+(hx-dx*25/zoom)*zoom,clientY:40+(hy-dy*25/zoom)*zoom});
+    const saved=JSON.parse(widget.value);assert.ok(saved.box[0]>0||saved.box[1]>0||saved.box[2]<1200||saved.box[3]<2400);
+    assert.ok(saved.box[0]>=0&&saved.box[1]>=0&&saved.box[2]<=1200&&saved.box[3]<=2400);
+    handlesEditor.up(event);assert.equal(handlesEditor.drag,null);assert.ok(!handlesEditor.canvas.hasPointerCapture(7));
+  }
+  handlesEditor.reset();const corner=handlesEditor.handles()[0];
+  const outside={button:0,pointerId:8,clientX:30+(corner[0]-16/zoom)*zoom,clientY:40+(corner[1]-16/zoom)*zoom,preventDefault(){}};
+  handlesEditor.move(outside);assert.equal(handlesEditor.canvas.style.cursor,'default');
+  handlesEditor.down(outside);assert.ok(!handlesEditor.drag,'blank area must not start a crop');
+}
+// Nearest handle wins when tiny selections have overlapping targets.
+handlesEditor.state.box=[100,100,110,110];
+const southeast=handlesEditor.handles()[4];assert.equal(handlesEditor.handleAt({px:southeast[0],py:southeast[1]}),'se');
+// Shift drawing and a second pointer must preserve the original gesture.
+handlesEditor.reset();const rect=handlesEditor.canvas.getBoundingClientRect();const center={button:0,pointerId:10,shiftKey:true,clientX:rect.left+rect.width/2,clientY:rect.top+rect.height/2,preventDefault(){}};
+handlesEditor.down(center);assert.equal(handlesEditor.drag.mode,'draw');
+handlesEditor.down({...center,pointerId:11});assert.equal(handlesEditor.drag.id,10);handlesEditor.up(center);
+handlesEditor.destroy();
+console.log('8-direction outside-edge hit/drag, zoom 0.5/1/2, screen-size targets, hover, bounds, nearest target and pointer capture checks passed.');

@@ -2,6 +2,9 @@ import { app } from '../../scripts/app.js';
 import { api } from '../../scripts/api.js';
 
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const HANDLE_SIZE=12;
+const HIT_RADIUS=14;
+const HANDLE_MODES=['nw','n','ne','e','se','s','sw','w'];
 export function outputSize(box,limit=0){
   const w=box[2]-box[0],h=box[3]-box[1],scale=limit>0?Math.min(1,limit/Math.max(w,h)):1;
   return [Math.max(1,Math.round(w*scale)),Math.max(1,Math.round(h*scale))];
@@ -33,6 +36,7 @@ export class CropEditor {
     this.root.append(header,this.caption,this.viewport,options,el('div','ha-crop-note','비율 유지 · 확대 안 함 · Shift+드래그: 새 영역'),this.info,this.error);
     this.enabled.onchange=()=>{this.limit.disabled=!this.enabled.checked;this.updateLimit();};this.limit.oninput=()=>this.updateLimit();
     this.canvas.addEventListener('pointerdown',e=>this.down(e));this.canvas.addEventListener('pointermove',e=>this.move(e));
+    this.canvas.addEventListener('pointerleave',()=>{if(!this.drag){this.hoverMode=null;this.draw();}});
     for(const name of ['pointerup','pointercancel','lostpointercapture'])this.canvas.addEventListener(name,e=>this.up(e));
     this.resize=new ResizeObserver(()=>this.draw());this.resize.observe(this.viewport);
     this.restore();
@@ -68,9 +72,20 @@ export class CropEditor {
   readLimit(){const value=Number(this.limit.value);if(!Number.isInteger(value)||value<1||value>32768)throw new Error('긴 변 크기는 1~32768 정수로 입력하세요.');return value;}
   updateLimit(){try{const limit=this.enabled.checked?this.readLimit():0;this.limit.setCustomValidity('');this.error.textContent='';if(this.state){this.state.max_edge=limit;this.save();}}catch(e){this.limit.setCustomValidity(e.message);this.error.textContent=e.message+' 마지막 유효 설정을 유지합니다.';}}
   reset(){if(this.state){this.state.box=[0,0,...this.state.size];this.save();}}
+  screenMetrics(){
+    const rect=this.canvas.getBoundingClientRect();
+    const sx=rect.width>0&&this.viewport.clientWidth>0?rect.width/this.viewport.clientWidth:1;
+    const sy=rect.height>0&&this.viewport.clientHeight>0?rect.height/this.viewport.clientHeight:1;
+    return {sx,sy,halfX:HANDLE_SIZE/2/sx,halfY:HANDLE_SIZE/2/sy,hitX:HIT_RADIUS/sx,hitY:HIT_RADIUS/sy};
+  }
+  syncScale(){
+    const {sx,sy}=this.screenMetrics();const key=[sx.toFixed(4),sy.toFixed(4),window.devicePixelRatio||1].join(':');
+    if(key!==this.scaleKey){this.scaleKey=key;this.draw();}
+  }
   geometry(){
     if(!this.state)return null;const width=this.viewport.clientWidth,height=this.viewport.clientHeight,[w,h]=this.state.size;
-    const scale=Math.min((width-20)/w,(height-20)/h);if(scale<=0)return null;
+    const {hitX,hitY}=this.screenMetrics();
+    const scale=Math.min((width-2*Math.max(10,hitX+2))/w,(height-2*Math.max(10,hitY+2))/h);if(scale<=0)return null;
     return {width,height,scale,x:(width-w*scale)/2,y:(height-h*scale)/2};
   }
   draw(){
@@ -82,18 +97,46 @@ export class CropEditor {
     ctx.drawImage(this.image,g.x,g.y,w*g.scale,h*g.scale);
     ctx.fillStyle='#0009';ctx.beginPath();ctx.rect(g.x,g.y,w*g.scale,h*g.scale);ctx.rect(g.x+x*g.scale,g.y+y*g.scale,(r-x)*g.scale,(b-y)*g.scale);ctx.fill('evenodd');
     ctx.strokeStyle='#80b7ff';ctx.lineWidth=2;ctx.strokeRect(g.x+x*g.scale,g.y+y*g.scale,(r-x)*g.scale,(b-y)*g.scale);
-    for(const [px,py] of this.handles()){ctx.fillStyle='#fff';ctx.fillRect(px-4,py-4,8,8);ctx.strokeRect(px-4,py-4,8,8);}
+    const {halfX,halfY}=this.screenMetrics();
+    this.handles().forEach(([px,py],i)=>{
+      const active=(this.drag?.mode??this.hoverMode)===HANDLE_MODES[i];
+      ctx.fillStyle=active?'#ffd166':'#fff';ctx.strokeStyle=active?'#ffb020':'#80b7ff';
+      ctx.fillRect(px-halfX,py-halfY,halfX*2,halfY*2);ctx.strokeRect(px-halfX,py-halfY,halfX*2,halfY*2);
+    });
     const out=outputSize(this.state.box,this.state.max_edge);this.info.textContent=`크롭 ${r-x} × ${b-y} → 출력 ${out[0]} × ${out[1]}`;
   }
   handles(){const g=this.geometry();if(!g)return [];const [x,y,r,b]=this.state.box;return [[x,y],[(x+r)/2,y],[r,y],[r,(y+b)/2],[r,b],[(x+r)/2,b],[x,b],[x,(y+b)/2]].map(([a,c])=>[g.x+a*g.scale,g.y+c*g.scale]);}
   position(e){const rect=this.canvas.getBoundingClientRect(),g=this.geometry();if(!g||rect.width<=0||rect.height<=0)return null;const px=(e.clientX-rect.left)*g.width/rect.width,py=(e.clientY-rect.top)*g.height/rect.height;return {px,py,point:[clamp(Math.round((px-g.x)/g.scale),0,this.state.size[0]),clamp(Math.round((py-g.y)/g.scale),0,this.state.size[1])],g};}
-  hit(pos){const modes=['nw','n','ne','e','se','s','sw','w'];const index=this.handles().findIndex(([x,y])=>Math.abs(x-pos.px)<=9&&Math.abs(y-pos.py)<=9);if(index>=0)return modes[index];const [x,y,r,b]=this.state.box,[a,c]=pos.point;return a>x&&a<r&&c>y&&c<b?'move':'draw';}
-  down(e){
-    if(e.button!==0||!this.state||!this.image||this.controller?.signal.aborted)return;const pos=this.position(e);if(!pos)return;const {g,px,py}=pos;
-    if(px<g.x||py<g.y||px>g.width-g.x||py>g.height-g.y)return;
-    e.preventDefault();this.panel.hidePreview();this.drag={id:e.pointerId,start:pos.point,origin:[...this.state.box],mode:e.shiftKey?'draw':this.hit(pos)};this.canvas.setPointerCapture(e.pointerId);
+  handleAt(pos){
+    const {hitX,hitY}=this.screenMetrics();let nearest=null,best=Infinity;
+    this.handles().forEach(([x,y],i)=>{const dx=(x-pos.px)/hitX,dy=(y-pos.py)/hitY;
+      if(Math.abs(dx)<=1&&Math.abs(dy)<=1&&dx*dx+dy*dy<best){best=dx*dx+dy*dy;nearest=HANDLE_MODES[i];}
+    });
+    return nearest;
   }
-  move(e){if(!this.state)return;const pos=this.position(e);if(!pos)return;if(!this.drag){const mode=this.hit(pos);this.canvas.style.cursor=mode==='draw'?'crosshair':mode==='move'?'move':mode+'-resize';return;}if(e.pointerId!==this.drag.id)return;e.preventDefault();const {start,origin,mode}=this.drag;const box=dragBox(start,pos.point,mode,origin,this.state.size);if(box[2]>box[0]&&box[3]>box[1]){this.state.box=box;this.save();}}
-  up(e){if(!this.drag||e.pointerId!==this.drag.id)return;this.drag=null;if(this.canvas.hasPointerCapture(e.pointerId))this.canvas.releasePointerCapture(e.pointerId);}
+  insideImage(pos){const {g,px,py}=pos;return px>=g.x&&py>=g.y&&px<=g.width-g.x&&py<=g.height-g.y;}
+  hit(pos){const handle=this.handleAt(pos);if(handle)return handle;
+    const [x,y,r,b]=this.state.box,[a,c]=pos.point;return a>x&&a<r&&c>y&&c<b?'move':'draw';}
+  down(e){
+    if(e.button!==0||this.drag||!this.state||!this.image||this.controller?.signal.aborted)return;
+    const pos=this.position(e);if(!pos)return;const handle=this.handleAt(pos),inside=this.insideImage(pos);
+    // Test handles before image bounds: half of an edge handle lies outside the image.
+    if(!handle&&!inside)return;
+    const mode=e.shiftKey&&inside?'draw':handle??this.hit(pos);
+    e.preventDefault();this.panel.hidePreview();this.drag={id:e.pointerId,start:pos.point,origin:[...this.state.box],mode};
+    this.hoverMode=mode;this.canvas.style.cursor=mode==='draw'?'crosshair':mode==='move'?'move':mode+'-resize';
+    this.canvas.setPointerCapture(e.pointerId);this.draw();
+  }
+  move(e){
+    if(!this.state)return;const pos=this.position(e);if(!pos)return;
+    if(!this.drag){const mode=this.handleAt(pos)??(this.insideImage(pos)?this.hit(pos):null);
+      this.canvas.style.cursor=mode===null?'default':mode==='draw'?'crosshair':mode==='move'?'move':mode+'-resize';
+      if(this.hoverMode!==mode){this.hoverMode=mode;this.draw();}return;}
+    if(e.pointerId!==this.drag.id)return;e.preventDefault();const {start,origin,mode}=this.drag;
+    const box=dragBox(start,pos.point,mode,origin,this.state.size);
+    if(box[2]>box[0]&&box[3]>box[1]){this.state.box=box;this.save();}
+  }
+  up(e){if(!this.drag||e.pointerId!==this.drag.id)return;this.drag=null;this.hoverMode=null;
+    if(this.canvas.hasPointerCapture(e.pointerId))this.canvas.releasePointerCapture(e.pointerId);this.draw();}
   destroy(){this.controller?.abort();this.resize.disconnect();this.image=null;this.state=null;}
 }
