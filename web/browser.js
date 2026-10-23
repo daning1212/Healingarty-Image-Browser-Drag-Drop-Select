@@ -1,6 +1,7 @@
 import { app } from '../../scripts/app.js';
 import { api } from '../../scripts/api.js';
 import { CropEditor } from './crop.js';
+import { installCanvasPan } from './pan.js';
 
 const TYPE = 'Healingarty/ImageBrowser';
 const MIME = 'application/x-healingarty-image';
@@ -29,7 +30,7 @@ class BrowserPanel {
     this.input.onkeydown=e=>{if(e.key==='Enter')this.navigate(this.input.value);};
     tools.append(button('←',()=>this.back()),button('↑',()=>this.navigate(this.parent)),button('⟳',()=>this.navigate(this.path,false)),this.input,button('이동',()=>this.navigate(this.input.value)));
     const actions=el('div','ha-tools');
-    actions.append(el('span','ha-version','v0.3.1'),button('현재 경로 열기',()=>this.open()),button('경로 지정',()=>{this.picker.hidden=!this.picker.hidden;}),button('☆ 즐겨찾기',()=>this.favorite()));
+    actions.append(el('span','ha-version','v0.3.2'),button('현재 경로 열기',()=>this.open()),button('경로 지정',()=>{this.picker.hidden=!this.picker.hidden;}),button('☆ 즐겨찾기',()=>this.favorite()));
     this.search=el('input'); this.search.placeholder='파일명 검색'; let timer;
     this.search.oninput=()=>{clearTimeout(timer);timer=setTimeout(()=>this.navigate(this.path,false),250);};
     const size=el('input');size.type='range';size.min=80;size.max=220;size.value=read('size',120);size.title='썸네일 크기';
@@ -44,9 +45,10 @@ class BrowserPanel {
     this.workspace=el('div','ha-workspace');this.crop=new CropEditor(this);this.divider=el('div','ha-divider');this.divider.title='드래그하여 탐색기 너비 조절';
     this.workspace.append(this.browserPane,this.divider,this.crop.root);this.root.append(this.workspace);
     actions.append(button('크롭창 열기 / 접기',()=>this.toggleCrop(this.crop.root.hidden)));
-    this.divider.onpointerdown=e=>{e.preventDefault();this.divider.setPointerCapture(e.pointerId);};
+    this.divider.onpointerdown=e=>{if(e.button!==0)return;e.preventDefault();this.divider.setPointerCapture(e.pointerId);};
     this.divider.onpointermove=e=>{if(!this.divider.hasPointerCapture(e.pointerId))return;const rect=this.workspace.getBoundingClientRect();const fraction=Math.max(.3,Math.min(.7,(e.clientX-rect.left)/rect.width));this.browserPane.style.flexBasis=(fraction*100)+'%';};
     this.divider.onpointerup=e=>{if(this.divider.hasPointerCapture(e.pointerId))this.divider.releasePointerCapture(e.pointerId);};
+    this.removeCanvasPan=installCanvasPan(this.root,()=>app.canvas?.canvas,()=>this.hidePreview());
     for(const event of ['pointerdown','mousedown','pointerup','mouseup','click','dblclick','wheel','keydown'])this.root.addEventListener(event,e=>e.stopPropagation());
     this.observer=new IntersectionObserver(entries=>{for(const entry of entries)if(entry.isIntersecting){this.observer.unobserve(entry.target);this.queue.push({card:entry.target,generation:this.generation});}this.pump();},{root:this.scroller,rootMargin:'120px'});
     request('roots',{}).then(data=>{for(const path of data.roots){this.roots.append(button(path,()=>this.navigate(path)));this.treeEntry(path,path);if(!this.treeRoots.includes(path))this.treeRoots.push(path);}this.renderTree();}).catch(e=>this.error(e));
@@ -161,13 +163,13 @@ class BrowserPanel {
     const blob=await response.blob();if(generation!==this.generation||!card.isConnected)return;const url=URL.createObjectURL(blob);this.urls.add(url);card.querySelector('img').src=url;
     card.querySelector('.ha-info').textContent=`${response.headers.get('X-Image-Width')} × ${response.headers.get('X-Image-Height')} · ${card.item.name.split('.').pop().toUpperCase()}`;
   }catch(e){if(generation===this.generation&&e.name!=='AbortError')card.querySelector('.ha-info').textContent='읽기 실패';}}
-  destroy(){this.crop?.destroy();this.hidePreview();document.removeEventListener('keydown',this.onPreviewKey);window.removeEventListener('blur',this.onPreviewBlur);this.generation++;this.controller?.abort();this.observer.disconnect();this.queue=[];for(const url of this.urls)URL.revokeObjectURL(url);}
+  destroy(){this.removeCanvasPan?.();this.crop?.destroy();this.hidePreview();document.removeEventListener('keydown',this.onPreviewKey);window.removeEventListener('blur',this.onPreviewBlur);this.generation++;this.controller?.abort();this.observer.disconnect();this.queue=[];for(const url of this.urls)URL.revokeObjectURL(url);}
 }
 
 app.registerExtension({
   name:'Healingarty.ImageBrowser',
   async setup(){
-    const style=el('link');style.rel='stylesheet';style.href=new URL('./browser.css?v=0.3.1',import.meta.url).href;document.head.append(style);
+    const style=el('link');style.rel='stylesheet';style.href=new URL('./browser.css?v=0.3.2',import.meta.url).href;document.head.append(style);
     // Capture only our private MIME: never invoke ComfyUI's PNG workflow loader.
     const own=e=>Array.from(e.dataTransfer?.types??[]).includes(MIME);
     document.addEventListener('dragover',e=>{if(own(e)){e.preventDefault();e.stopImmediatePropagation();e.dataTransfer.dropEffect='copy';}},true);

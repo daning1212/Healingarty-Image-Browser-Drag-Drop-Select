@@ -29,3 +29,6 @@
 .ha-crop input[type=checkbox]{min-width:0;flex:0 0 auto;width:auto}
 .ha-crop input[type=number]{width:85px;min-width:65px;flex:0 1 85px}
 .ha-crop-note{color:#aaa;font-size:11px}.ha-crop-info{color:#b7d6ff;min-height:18px}.ha-crop-error{color:#ffbd9f;overflow-wrap:anywhere}
+
+/* Middle-button navigation should show the hand even above cards and controls. */
+.ha-browser.ha-panning,.ha-browser.ha-panning *{cursor:grabbing!important}
