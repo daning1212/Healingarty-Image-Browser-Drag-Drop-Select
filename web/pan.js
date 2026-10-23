@@ -1,6 +1,6 @@
 // Route middle-button navigation from the DOM overlay to ComfyUI's graph canvas.
-// Wheel navigation follows the graph settings; Shift+wheel scrolls the panel.
-export function installCanvasPan(root, getCanvas, hidePreview, scrollPanel) {
+// Wheel scrolls only the photo list; other panel areas follow graph navigation.
+export function installCanvasPan(root, getCanvas, hidePreview, photoList) {
   const doc=root.ownerDocument, win=doc.defaultView;
   let active=null;
   function forward(type,e){
@@ -41,7 +41,13 @@ export function installCanvasPan(root, getCanvas, hidePreview, scrollPanel) {
     try{forward('pointerdown',e);}catch(error){finish();throw error;}
   }
   function wheel(e){
-    if(e.shiftKey&&scrollPanel){stop(e);hidePreview();scrollPanel(e);return;}
+    if(photoList?.contains(e.target)){
+      stop(e);hidePreview();
+      const unit=e.deltaMode===1?40:e.deltaMode===2?photoList.clientHeight:1;
+      photoList.scrollTop+=e.deltaY*unit;
+      photoList.scrollLeft+=e.deltaX*unit;
+      return;
+    }
     const canvas=getCanvas();if(!canvas?.dispatchEvent||!win.WheelEvent)return;
     stop(e);hidePreview();
     const event=new win.WheelEvent('wheel',{

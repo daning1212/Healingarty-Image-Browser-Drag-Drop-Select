@@ -22,7 +22,9 @@ canvas.addEventListener('pointerdown',e=>{previous=[e.clientX,e.clientY];events.
 canvas.addEventListener('pointermove',e=>{offset[0]+=(e.clientX-previous[0])/scale;offset[1]+=(e.clientY-previous[1])/scale;previous=[e.clientX,e.clientY];events.push(e);});
 canvas.addEventListener('pointerup',e=>{previous=null;events.push(e);});
 const ctx={};vm.createContext(ctx);vm.runInContext(readFileSync(new URL('../web/pan.js',import.meta.url),'utf8').replace('export function','function')+'\nglobalThis.install=installCanvasPan;',ctx);
-let hidden=0,scrolled=0;const wheels=[];canvas.addEventListener('wheel',e=>wheels.push(e));const remove=ctx.install(root,()=>canvas,()=>hidden++,e=>scrolled+=e.deltaY);
+const photo={},image={},tree={},crop={},toolbar={};
+const photoList={contains:target=>target===photo||target===image,scrollTop:0,scrollLeft:0,clientHeight:400};
+let hidden=0;const wheels=[];canvas.addEventListener('wheel',e=>wheels.push(e));const remove=ctx.install(root,()=>canvas,()=>hidden++,photoList);
 const event=(type,options={})=>new Pointer(type,{pointerId:7,pointerType:'mouse',isPrimary:true,clientX:100,clientY:80,button:1,buttons:4,...options});
 // Left click, right click and touch must not become canvas navigation.
 for(const options of [{button:0,buttons:1},{button:2,buttons:2},{pointerType:'touch'},{button:1,buttons:5}]){const e=event('pointerdown',options);root.dispatchEvent(e);assert.equal(e.defaultPrevented,false);}
@@ -30,7 +32,21 @@ for(const deltaY of [-100,100]){
  const e=new Wheel('wheel',{deltaY,deltaX:0,deltaMode:0,clientX:310,clientY:220,ctrlKey:true});root.dispatchEvent(e);
  assert.ok(e.defaultPrevented);assert.equal(wheels.at(-1).deltaY,deltaY);assert.equal(wheels.at(-1).wheelDeltaY,-deltaY);assert.equal(wheels.at(-1).clientX,310);assert.equal(wheels.at(-1).ctrlKey,true);
 }
-root.dispatchEvent(new Wheel('wheel',{deltaY:30,shiftKey:true}));assert.equal(scrolled,30);assert.equal(wheels.length,2);assert.equal(events.length,0);
+// Photos and nested thumbnail elements scroll the list without forwarding zoom.
+for(const target of [photo,image]){
+ const e=new Wheel('wheel',{deltaY:30,deltaX:0,deltaMode:0});Object.defineProperty(e,'target',{value:target});root.dispatchEvent(e);assert.ok(e.defaultPrevented);
+}
+assert.equal(photoList.scrollTop,60);assert.equal(wheels.length,2);
+const line=new Wheel('wheel',{deltaY:-1,deltaX:0,deltaMode:1});Object.defineProperty(line,'target',{value:image});root.dispatchEvent(line);assert.equal(photoList.scrollTop,20);
+const page=new Wheel('wheel',{deltaY:1,deltaX:0,deltaMode:2});Object.defineProperty(page,'target',{value:photo});root.dispatchEvent(page);assert.equal(photoList.scrollTop,420);
+// Even at a list boundary no zoom is forwarded.
+photoList.scrollTop=0;root.dispatchEvent(line);assert.equal(wheels.length,2);
+for(const target of [tree,crop,toolbar]){
+ const e=new Wheel('wheel',{deltaY:100,deltaX:0,deltaMode:0});Object.defineProperty(e,'target',{value:target});root.dispatchEvent(e);assert.ok(e.defaultPrevented);
+}
+assert.equal(wheels.length,5);assert.equal(events.length,0);
+// Shift is no longer a special list-scrolling shortcut elsewhere in the panel.
+root.dispatchEvent(new Wheel('wheel',{deltaY:30,deltaX:0,deltaMode:0,shiftKey:true}));assert.equal(wheels.length,6);
 hidden=0;
 let childDown=0;root.addEventListener('pointerdown',()=>childDown++);
 const down=event('pointerdown',{ctrlKey:true});root.dispatchEvent(down);assert.equal(childDown,0);assert.ok(down.defaultPrevented);assert.equal(hidden,1);assert.ok(classes.has('ha-panning'));
@@ -58,4 +74,4 @@ for(const ending of ['pointercancel','missing-button','blur','destroy']){
  assert.equal(previous,null);assert.equal(doc.count(),0);assert.equal(win.count(),0);assert.equal(classes.size,0);
 }
 assert.equal(root.count(),1); // only the test listener remains after disposal
-console.log('PASS: middle-button forwarding, scaled pan, left/right/touch isolation, wheel directions/anchor/legacy delta forwarding, Shift scrolling, preview dismissal, outside drag, pointer identity, cancel/blur/removal cleanup.');
+console.log('PASS: middle-button forwarding, scaled pan, left/right/touch isolation, wheel directions/anchor/legacy delta forwarding, photo-only scrolling, tree/crop/toolbar navigation, list boundaries, preview dismissal, outside drag, pointer identity, cancel/blur/removal cleanup.');
