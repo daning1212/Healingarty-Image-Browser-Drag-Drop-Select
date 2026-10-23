@@ -32,3 +32,8 @@
 
 /* Middle-button navigation should show the hand even above cards and controls. */
 .ha-browser.ha-panning,.ha-browser.ha-panning *{cursor:grabbing!important}
+
+.ha-browser .ha-more{display:block;width:100%;margin-top:10px;padding:10px 14px;background:#176bd1;border:1px solid #65abff;border-radius:6px;color:#fff;font-weight:600;cursor:pointer}
+.ha-browser .ha-more:hover{background:#2582ec}
+.ha-browser .ha-more:focus-visible{outline:2px solid #a9d6ff;outline-offset:2px}
+.ha-browser .ha-more:disabled{background:#254c7b;border-color:#466b98;color:#b8cce5;cursor:wait}

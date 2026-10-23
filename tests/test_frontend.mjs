@@ -23,3 +23,12 @@ let [w,h]=context.previewSizeForTest(1000,500,100,100,4000,3000);assert.equal(w,
 const actual=context.RealPanel.prototype;let removed=false,aborted=false;
 const hover={previewTimer:undefined,previewCard:{},previewController:{abort(){aborted=true;}},previewElement:{remove(){removed=true;}}};actual.hidePreview.call(hover);assert.ok(removed&&aborted);assert.equal(hover.previewCard,null);
 console.log('Hover sizing, aspect ratio, viewport cap and cancellation checks passed.');
+
+// Slider and Ctrl+wheel share the same bounded, persisted thumbnail sizing path.
+const stored={};context.localStorage.setItem=(key,value)=>stored[key]=value;
+const sizes={};const sizing=Object.create(context.RealPanel.prototype);
+sizing.root={style:{setProperty:(key,value)=>sizes[key]=value}};sizing.thumbSize={value:'120'};
+for(const [value,expected]of [[130,130],[1000,220],[-100,80],['bad',120],[160,160]]){
+ sizing.setThumbnailSize(value);assert.equal(sizing.thumbSize.value,String(expected));assert.equal(sizes['--ha-size'],expected+'px');assert.equal(JSON.parse(stored['healingarty.browser.size']),expected);
+}
+console.log('Thumbnail slider/Ctrl-wheel shared sizing, bounds and persisted preference checks passed.');

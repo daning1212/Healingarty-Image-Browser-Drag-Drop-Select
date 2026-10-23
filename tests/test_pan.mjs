@@ -24,7 +24,7 @@ canvas.addEventListener('pointerup',e=>{previous=null;events.push(e);});
 const ctx={};vm.createContext(ctx);vm.runInContext(readFileSync(new URL('../web/pan.js',import.meta.url),'utf8').replace('export function','function')+'\nglobalThis.install=installCanvasPan;',ctx);
 const photo={},image={},tree={},crop={},toolbar={};
 const photoList={contains:target=>target===photo||target===image,scrollTop:0,scrollLeft:0,clientHeight:400};
-let hidden=0;const wheels=[];canvas.addEventListener('wheel',e=>wheels.push(e));const remove=ctx.install(root,()=>canvas,()=>hidden++,photoList);
+let hidden=0;const resized=[];const wheels=[];canvas.addEventListener('wheel',e=>wheels.push(e));const remove=ctx.install(root,()=>canvas,()=>hidden++,photoList,delta=>resized.push(delta));
 const event=(type,options={})=>new Pointer(type,{pointerId:7,pointerType:'mouse',isPrimary:true,clientX:100,clientY:80,button:1,buttons:4,...options});
 // Left click, right click and touch must not become canvas navigation.
 for(const options of [{button:0,buttons:1},{button:2,buttons:2},{pointerType:'touch'},{button:1,buttons:5}]){const e=event('pointerdown',options);root.dispatchEvent(e);assert.equal(e.defaultPrevented,false);}
@@ -39,6 +39,12 @@ for(const target of [photo,image]){
 assert.equal(photoList.scrollTop,60);assert.equal(wheels.length,2);
 const line=new Wheel('wheel',{deltaY:-1,deltaX:0,deltaMode:1});Object.defineProperty(line,'target',{value:image});root.dispatchEvent(line);assert.equal(photoList.scrollTop,20);
 const page=new Wheel('wheel',{deltaY:1,deltaX:0,deltaMode:2});Object.defineProperty(page,'target',{value:photo});root.dispatchEvent(page);assert.equal(photoList.scrollTop,420);
+// Ctrl+wheel inside the photo list resizes thumbnails without list/canvas movement.
+const previousScroll=photoList.scrollTop;
+for(const target of [photo,image])for(const deltaY of [-100,100,0]){
+ const e=new Wheel('wheel',{deltaY,deltaX:0,deltaMode:0,ctrlKey:true});Object.defineProperty(e,'target',{value:target});root.dispatchEvent(e);assert.ok(e.defaultPrevented);
+}
+assert.deepEqual(resized,[-100,100,-100,100]);assert.equal(photoList.scrollTop,previousScroll);assert.equal(wheels.length,2);
 // Even at a list boundary no zoom is forwarded.
 photoList.scrollTop=0;root.dispatchEvent(line);assert.equal(wheels.length,2);
 for(const target of [tree,crop,toolbar]){

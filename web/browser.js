@@ -30,16 +30,16 @@ class BrowserPanel {
     this.input.onkeydown=e=>{if(e.key==='Enter')this.navigate(this.input.value);};
     tools.append(button('←',()=>this.back()),button('↑',()=>this.navigate(this.parent)),button('⟳',()=>this.navigate(this.path,false)),this.input,button('이동',()=>this.navigate(this.input.value)));
     const actions=el('div','ha-tools');
-    actions.append(el('span','ha-version','v0.3.4'),button('현재 경로 열기',()=>this.open()),button('경로 지정',()=>{this.picker.hidden=!this.picker.hidden;}),button('☆ 즐겨찾기',()=>this.favorite()));
+    actions.append(el('span','ha-version','v0.3.5'),button('현재 경로 열기',()=>this.open()),button('경로 지정',()=>{this.picker.hidden=!this.picker.hidden;}),button('☆ 즐겨찾기',()=>this.favorite()));
     this.search=el('input'); this.search.placeholder='파일명 검색'; let timer;
     this.search.oninput=()=>{clearTimeout(timer);timer=setTimeout(()=>this.navigate(this.path,false),250);};
-    const size=el('input');size.type='range';size.min=80;size.max=220;size.value=read('size',120);size.title='썸네일 크기';
-    size.oninput=()=>{this.root.style.setProperty('--ha-size',size.value+'px');save('size',Number(size.value));};size.oninput();actions.append(this.search,size);
+    const size=this.thumbSize=el('input');size.type='range';size.min=80;size.max=220;size.value=read('size',120);size.title='썸네일 크기 · 사진 목록에서 Ctrl+휠';
+    size.oninput=()=>{this.setThumbnailSize(size.value);this.hidePreview();};this.setThumbnailSize(size.value);actions.append(this.search,size);
     this.picker=el('div','ha-picker');this.picker.hidden=true;
     this.picker.append(el('div','','ComfyUI 실행 컴퓨터의 드라이브 / 폴더'));
     this.roots=el('div','ha-tools');this.picker.append(this.roots,button('이 폴더 선택',()=>{this.picker.hidden=true;this.input.value=this.path;}));
     this.favorites=el('div','ha-tools');this.renderFavorites();
-    const body=el('div','ha-body');this.folders=el('div','ha-folders');this.scroller=el('div','ha-scroll');this.grid=el('div','ha-grid');this.more=button('더 불러오기',()=>this.loadMore());this.scroller.append(this.grid,this.more);body.append(this.folders,this.scroller);
+    const body=el('div','ha-body');this.folders=el('div','ha-folders');this.scroller=el('div','ha-scroll');this.grid=el('div','ha-grid');this.more=button('더 불러오기',()=>this.loadMore());this.more.className='ha-more';this.scroller.append(this.grid,this.more);body.append(this.folders,this.scroller);
     this.status=el('div','ha-status','이미지를 기존 Load Image 노드로 드래그하세요.');
     this.browserPane=el('div','ha-browser-pane');this.browserPane.append(tools,actions,this.picker,this.favorites,body,this.status);
     this.workspace=el('div','ha-workspace');this.crop=new CropEditor(this);this.divider=el('div','ha-divider');this.divider.title='드래그하여 탐색기 너비 조절';
@@ -48,7 +48,7 @@ class BrowserPanel {
     this.divider.onpointerdown=e=>{if(e.button!==0)return;e.preventDefault();this.divider.setPointerCapture(e.pointerId);};
     this.divider.onpointermove=e=>{if(!this.divider.hasPointerCapture(e.pointerId))return;const rect=this.workspace.getBoundingClientRect();const fraction=Math.max(.3,Math.min(.7,(e.clientX-rect.left)/rect.width));this.browserPane.style.flexBasis=(fraction*100)+'%';};
     this.divider.onpointerup=e=>{if(this.divider.hasPointerCapture(e.pointerId))this.divider.releasePointerCapture(e.pointerId);};
-    this.removeCanvasPan=installCanvasPan(this.root,()=>app.canvas?.canvas,()=>this.hidePreview(),this.scroller);
+    this.removeCanvasPan=installCanvasPan(this.root,()=>app.canvas?.canvas,()=>this.hidePreview(),this.scroller,delta=>this.setThumbnailSize(Number(this.thumbSize.value)+(delta<0?10:-10)));
     for(const event of ['pointerdown','mousedown','pointerup','mouseup','click','dblclick','wheel','keydown'])this.root.addEventListener(event,e=>e.stopPropagation());
     this.observer=new IntersectionObserver(entries=>{for(const entry of entries)if(entry.isIntersecting){this.observer.unobserve(entry.target);this.queue.push({card:entry.target,generation:this.generation});}this.pump();},{root:this.scroller,rootMargin:'120px'});
     request('roots',{}).then(data=>{for(const path of data.roots){this.roots.append(button(path,()=>this.navigate(path)));this.treeEntry(path,path);if(!this.treeRoots.includes(path))this.treeRoots.push(path);}this.renderTree();}).catch(e=>this.error(e));
@@ -57,6 +57,7 @@ class BrowserPanel {
     this.onPreviewBlur=()=>this.hidePreview();document.addEventListener('keydown',this.onPreviewKey);window.addEventListener('blur',this.onPreviewBlur);
     this.navigate(read('path',''));
   }
+  setThumbnailSize(value){const n=Number(value);const size=Math.max(80,Math.min(220,Number.isFinite(n)?n:120));this.thumbSize.value=String(size);this.root.style.setProperty('--ha-size',size+'px');save('size',size);}
   toggleCrop(open){this.crop.root.hidden=!open;this.divider.hidden=!open;this.browserPane.style.flexBasis=open?'55%':'100%';if(open)this.crop.draw();}
   error(e){if(e.name!=='AbortError')this.status.textContent=e.message;}
   favorite(){if(!this.path)return;const values=read('favorites',[]);if(!values.includes(this.path))values.push(this.path);save('favorites',values);this.renderFavorites();}
@@ -169,7 +170,7 @@ class BrowserPanel {
 app.registerExtension({
   name:'Healingarty.ImageBrowser',
   async setup(){
-    const style=el('link');style.rel='stylesheet';style.href=new URL('./browser.css?v=0.3.4',import.meta.url).href;document.head.append(style);
+    const style=el('link');style.rel='stylesheet';style.href=new URL('./browser.css?v=0.3.5',import.meta.url).href;document.head.append(style);
     // Capture only our private MIME: never invoke ComfyUI's PNG workflow loader.
     const own=e=>Array.from(e.dataTransfer?.types??[]).includes(MIME);
     document.addEventListener('dragover',e=>{if(own(e)){e.preventDefault();e.stopImmediatePropagation();e.dataTransfer.dropEffect='copy';}},true);
