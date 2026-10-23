@@ -1,6 +1,6 @@
 // Route middle-button navigation from the DOM overlay to ComfyUI's graph canvas.
-// Left-button editing and ordinary wheel scrolling remain owned by the panel.
-export function installCanvasPan(root, getCanvas, hidePreview) {
+// Wheel navigation follows the graph settings; Shift+wheel scrolls the panel.
+export function installCanvasPan(root, getCanvas, hidePreview, scrollPanel) {
   const doc=root.ownerDocument, win=doc.defaultView;
   let active=null;
   function forward(type,e){
@@ -40,12 +40,29 @@ export function installCanvasPan(root, getCanvas, hidePreview) {
     win.addEventListener('blur',cancel);
     try{forward('pointerdown',e);}catch(error){finish();throw error;}
   }
+  function wheel(e){
+    if(e.shiftKey&&scrollPanel){stop(e);hidePreview();scrollPanel(e);return;}
+    const canvas=getCanvas();if(!canvas?.dispatchEvent||!win.WheelEvent)return;
+    stop(e);hidePreview();
+    const event=new win.WheelEvent('wheel',{
+      bubbles:true,cancelable:true,composed:true,
+      clientX:e.clientX,clientY:e.clientY,screenX:e.screenX,screenY:e.screenY,
+      deltaX:e.deltaX,deltaY:e.deltaY,deltaZ:e.deltaZ,deltaMode:e.deltaMode,
+      ctrlKey:e.ctrlKey,shiftKey:e.shiftKey,altKey:e.altKey,metaKey:e.metaKey,
+    });
+    // Older LiteGraph versions read wheelDeltaY instead of standard deltaY.
+    const delta=e.wheelDeltaY??-e.deltaY*(e.deltaMode===1?40:e.deltaMode===2?800:1);
+    Object.defineProperty(event,'wheelDeltaY',{value:delta});
+    Object.defineProperty(event,'wheelDelta',{value:e.wheelDelta??delta});
+    canvas.dispatchEvent(event);
+  }
   function suppressMiddle(e){if(e.button===1)stop(e);}
+  root.addEventListener('wheel',wheel,{capture:true,passive:false});
   root.addEventListener('pointerdown',down,true);
   root.addEventListener('mousedown',suppressMiddle,true);
   root.addEventListener('auxclick',suppressMiddle,true);
   return ()=>{
-    cancel();root.removeEventListener('pointerdown',down,true);
+    cancel();root.removeEventListener('wheel',wheel,true);root.removeEventListener('pointerdown',down,true);
     root.removeEventListener('mousedown',suppressMiddle,true);
     root.removeEventListener('auxclick',suppressMiddle,true);
   };
