@@ -47,7 +47,7 @@ class BackendTests(unittest.TestCase):
         import numpy as np
         source=self.base/'selected.png';Image.new('RGB',(4,3),(255,0,0)).save(source)
         cls=self.module.HealingartyImageBrowser
-        self.assertEqual(cls.RETURN_TYPES,('IMAGE','IMAGE'))
+        self.assertEqual(cls.RETURN_TYPES,('IMAGE','IMAGE','MASK','MASK'))
         self.assertTrue(cls.VALIDATE_INPUTS(str(source)))
         self.assertIsInstance(cls.VALIDATE_INPUTS(''),str)
         before=cls.IS_CHANGED(str(source))
@@ -95,7 +95,7 @@ class BackendTests(unittest.TestCase):
             def unsqueeze(self,axis): return np.expand_dims(self.array,axis)
         sys.modules['torch']=types.SimpleNamespace(from_numpy=Tensor)
         try:
-            original,crop=cls().load_selected(str(a),raw)
+            original,crop,original_mask,crop_mask=cls().load_selected(str(a),raw)
             self.assertEqual(original.shape,(1,6,8,3));self.assertEqual(crop.shape,(1,8,3,3))
             np.testing.assert_array_equal(crop[0,0,0],[0,0,1])
             restored=cls().load_selected('',raw)
@@ -134,4 +134,81 @@ class BackendTests(unittest.TestCase):
         bad=self.base/'bad.png';bad.write_text('invalid')
         with self.assertRaises(OSError): self.module.import_image(str(bad))
         with self.assertRaises(ValueError): self.module.image_path(str(self.base))
+    def load_with_tensor_adapter(self, path, state=''):
+        import numpy as np
+        from unittest.mock import patch
+        class Tensor:
+            def __init__(self, array): self.array = array
+            def unsqueeze(self, axis): return np.expand_dims(self.array, axis)
+        with patch.dict(sys.modules, {'torch': types.SimpleNamespace(from_numpy=Tensor)}):
+            return self.module.HealingartyImageBrowser().load_selected(path, state)
+
+    def test_rgba_mask_values_shape_and_alpha_roundtrip(self):
+        import numpy as np
+        image=Image.new('RGBA',(4,2),(20,40,60,255))
+        for x,a in enumerate([0,64,128,255]):image.putpixel((x,0),(20,40,60,a))
+        path=self.base/'alpha.png';image.save(path);before=path.read_bytes()
+        original,crop,mask,crop_mask=self.load_with_tensor_adapter(str(path))
+        self.assertEqual(original.shape,(1,2,4,3));self.assertEqual(mask.shape,(1,2,4))
+        self.assertEqual(mask.dtype,np.float32)
+        expected=1-np.asarray(image.getchannel('A'),dtype=np.float32)/255
+        np.testing.assert_allclose(mask[0],expected)
+        np.testing.assert_allclose((1-mask[0])*255,np.asarray(image.getchannel('A')),atol=0.0001)
+        self.assertIs(original,crop);self.assertIs(mask,crop_mask)
+        self.assertEqual(path.read_bytes(),before)
+
+    def test_jpeg_and_opaque_png_masks_are_full_size_zero(self):
+        import numpy as np
+        for mode,extension,color in [('RGB','jpg',(30,50,70)),('RGBA','png',(30,50,70,255))]:
+            path=self.base/('opaque.'+extension);Image.new(mode,(7,5),color).save(path)
+            _,_,mask,crop_mask=self.load_with_tensor_adapter(str(path))
+            self.assertEqual(mask.shape,(1,5,7));self.assertIs(mask,crop_mask)
+            np.testing.assert_array_equal(mask,np.zeros((1,5,7),dtype=np.float32))
+
+    def test_independent_crop_mask_matches_image_resize_and_restores(self):
+        import json
+        import numpy as np
+        a=self.base/'mask_original.jpg';Image.new('RGB',(5,4),'red').save(a)
+        b=self.base/'mask_crop.png';image=Image.new('RGBA',(8,6),(15,25,35,255))
+        alpha=Image.fromarray(np.arange(48,dtype=np.uint8).reshape(6,8)*5);image.putalpha(alpha);image.save(b)
+        state={'path':str(b),'size':[8,6],'box':[1,1,7,5],'max_edge':3}
+        original,crop,mask,crop_mask=self.load_with_tensor_adapter(str(a),json.dumps(state))
+        self.assertEqual(mask.shape,original.shape[:3]);self.assertEqual(crop_mask.shape,crop.shape[:3])
+        self.assertEqual(crop.shape,(1,2,3,3));self.assertEqual(float(mask.max()),0)
+        expected=alpha.crop((1,1,7,5)).resize((3,2),Image.Resampling.LANCZOS)
+        np.testing.assert_allclose(crop_mask[0],1-np.asarray(expected,dtype=np.float32)/255)
+        expected_rgb=self.module.process_crop(image.convert('RGB'),state)
+        np.testing.assert_allclose(crop[0],np.asarray(expected_rgb,dtype=np.float32)/255)
+        restored=self.load_with_tensor_adapter('',json.dumps(state))
+        np.testing.assert_allclose(restored[3],crop_mask)
+        self.assertEqual(restored[2].shape,(1,6,8))
+
+    def test_palette_rgb_transparency_and_grayscale_alpha(self):
+        import numpy as np
+        for mode in ['P','RGB','LA']:
+            path=self.base/('transparent_'+mode+'.png')
+            if mode=='P':
+                image=Image.new('P',(2,1));image.putpalette([255,0,0,0,255,0]+[0]*762);image.putdata([0,1]);image.save(path,transparency=0)
+            elif mode=='RGB':
+                image=Image.new('RGB',(2,1),'red');image.putpixel((1,0),(0,255,0));image.save(path,transparency=(255,0,0))
+            else:
+                image=Image.new('LA',(2,1),(100,0));image.putpixel((1,0),(100,255));image.save(path)
+            mask=self.load_with_tensor_adapter(str(path))[2]
+            np.testing.assert_array_equal(mask,np.array([[[1,0]]],dtype=np.float32))
+
+    def test_exif_orientation_applies_to_image_and_mask_together(self):
+        import json
+        import numpy as np
+        from PIL import ImageOps
+        image=Image.new('RGBA',(3,2),(15,25,35,255));image.putpixel((0,0),(15,25,35,0))
+        exif=Image.Exif();exif[274]=6
+        path=self.base/'rotated_alpha.png';image.save(path,exif=exif)
+        with Image.open(path) as opened:
+            expected=ImageOps.exif_transpose(opened).getchannel('A')
+        state={'path':str(path),'size':[2,3],'box':[0,0,2,3],'max_edge':0}
+        original,crop,mask,crop_mask=self.load_with_tensor_adapter(str(path),json.dumps(state))
+        self.assertEqual(original.shape,(1,3,2,3));self.assertEqual(mask.shape,(1,3,2))
+        np.testing.assert_allclose(mask[0],1-np.asarray(expected,dtype=np.float32)/255)
+        np.testing.assert_allclose(crop_mask,mask)
+
 if __name__=='__main__': unittest.main()

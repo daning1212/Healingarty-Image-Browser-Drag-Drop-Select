@@ -173,8 +173,8 @@ async def get_folder_tree(request):
 class HealingartyImageBrowser:
     """Read the selected original image only when its IMAGE output executes."""
     CATEGORY = 'Healingarty'
-    RETURN_TYPES = ('IMAGE', 'IMAGE')
-    RETURN_NAMES = ('IMAGE', 'CROP IMAGE')
+    RETURN_TYPES = ('IMAGE', 'IMAGE', 'MASK', 'MASK')
+    RETURN_NAMES = ('IMAGE', 'CROP IMAGE', 'MASK', 'CROP MASK')
     FUNCTION = 'load_selected'
 
     @classmethod
@@ -217,17 +217,36 @@ class HealingartyImageBrowser:
         def read_image(raw):
             with Image.open(image_path(raw)) as original:
                 img = ImageOps.exif_transpose(original)
+                # PNG palette/tRNS transparency also needs conversion, not just RGBA/LA.
+                alpha = (img.convert('RGBA').getchannel('A')
+                         if 'A' in img.getbands() or 'transparency' in img.info
+                         else Image.new('L', img.size, 255))
                 if img.mode == 'I':
                     img = img.point(lambda value: value * (1 / 255))
-                return img.convert('RGB')
+                return img.convert('RGB'), alpha
         def tensor(img):
             pixels = np.asarray(img, dtype=np.float32) / 255.0
             return torch.from_numpy(pixels).unsqueeze(0)
-        original = read_image(selected_path or state['path'])
-        source = original if not state or state['path'] == selected_path else read_image(state['path'])
-        cropped = process_crop(source, state) if state else source
+        def mask_tensor(alpha):
+            # Match ComfyUI Load Image MASK convention, not raw opacity alpha.
+            pixels = 1.0 - np.asarray(alpha, dtype=np.float32) / 255.0
+            return torch.from_numpy(pixels).unsqueeze(0)
+        original_path = selected_path or state['path']
+        original, original_alpha = read_image(original_path)
+        if state and state['path'] != original_path:
+            source, source_alpha = read_image(state['path'])
+        else:
+            source, source_alpha = original, original_alpha
         original_tensor = tensor(original)
-        return (original_tensor, tensor(cropped) if state else original_tensor)
+        original_mask = mask_tensor(original_alpha)
+        if state:
+            cropped = process_crop(source, state)
+            cropped_alpha = process_crop(source_alpha, state)
+            crop_tensor, crop_mask = tensor(cropped), mask_tensor(cropped_alpha)
+        else:
+            crop_tensor, crop_mask = original_tensor, original_mask
+        return (original_tensor, crop_tensor, original_mask, crop_mask)
+
 
 
 def parse_crop_state(raw):

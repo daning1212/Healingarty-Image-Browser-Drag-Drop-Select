@@ -22,6 +22,13 @@ function previewSize(naturalWidth,naturalHeight,thumbWidth,thumbHeight,viewWidth
   return [Math.max(1,Math.round(naturalWidth*scale)),Math.max(1,Math.round(naturalHeight*scale))];
 }
 
+// Append new sockets on old workflows without reordering existing image links.
+function ensureBrowserOutputs(node){
+  if(typeof node.addOutput!=='function')return;
+  const outputs=[['IMAGE','IMAGE'],['CROP IMAGE','IMAGE'],['MASK','MASK'],['CROP MASK','MASK']];
+  for(let i=node.outputs?.length??0;i<outputs.length;i++)node.addOutput(...outputs[i]);
+}
+
 class BrowserPanel {
   constructor(node) {
     this.tree=new Map();this.treeRoots=[];this.expanded=new Set();this.treeLoading=new Set();this.selectedPath=node.widgets?.find(w=>w.name==='selected_path')?.value||'';this.node=node; this.path=''; this.parent=''; this.history=[]; this.next=null; this.generation=0; this.urls=new Set(); this.queue=[]; this.active=0;
@@ -36,7 +43,7 @@ class BrowserPanel {
     this.input.onkeydown=e=>{if(e.key==='Enter')this.navigate(this.input.value);};
     tools.append(button('←',()=>this.back()),button('↑',()=>this.navigate(this.parent)),button('⟳',()=>this.navigate(this.path,false)),this.input,button('이동',()=>this.navigate(this.input.value)));
     const actions=el('div','ha-tools');
-    actions.append(el('span','ha-version','v0.3.6'),button('현재 경로 열기',()=>this.open()),button('경로 지정',()=>{this.picker.hidden=!this.picker.hidden;}),button('☆ 즐겨찾기',()=>this.favorite()));
+    actions.append(el('span','ha-version','v0.3.7'),button('현재 경로 열기',()=>this.open()),button('경로 지정',()=>{this.picker.hidden=!this.picker.hidden;}),button('☆ 즐겨찾기',()=>this.favorite()));
     this.search=el('input'); this.search.placeholder='파일명 검색'; let timer;
     this.search.oninput=()=>{clearTimeout(timer);timer=setTimeout(()=>this.navigate(this.path,false),250);};
     const size=this.thumbSize=el('input');size.type='range';size.min=80;size.max=220;size.value=read('size',120);size.title='썸네일 크기 · 사진 목록에서 Ctrl+휠';
@@ -188,7 +195,7 @@ class BrowserPanel {
 app.registerExtension({
   name:'Healingarty.ImageBrowser',
   async setup(){
-    const style=el('link');style.rel='stylesheet';style.href=new URL('./browser.css?v=0.3.6',import.meta.url).href;document.head.append(style);
+    const style=el('link');style.rel='stylesheet';style.href=new URL('./browser.css?v=0.3.7',import.meta.url).href;document.head.append(style);
     // Capture only our private MIME: never invoke ComfyUI's PNG workflow loader.
     const own=e=>Array.from(e.dataTransfer?.types??[]).includes(MIME);
     document.addEventListener('dragover',e=>{if(own(e)){e.preventDefault();e.stopImmediatePropagation();e.dataTransfer.dropEffect='copy';}},true);
@@ -216,12 +223,14 @@ app.registerExtension({
       this.isVirtualNode=false;this.resizable=true;
       for(const name of ['selected_path','crop_state']){const selected=this.widgets?.find(w=>w.name===name);
       if(selected){selected.type='hidden';selected.computeSize=()=>[0,-4];selected.draw=()=>{};}}
+      ensureBrowserOutputs(this);
       this.panel=new BrowserPanel(this);
       this.syncPanelSize=()=>{
         this.panel.crop?.syncScale?.();
         const style=this.panel.root.style;
         const width=Math.max(320,this.size[0]-20)+'px';
-        const height=Math.max(280,this.size[1]-55)+'px';
+        const reserved=55+Math.max(0,(this.outputs?.length??2)-2)*20;
+        const height=Math.max(280,this.size[1]-reserved)+'px';
         if(style.width!==width)style.width=width;
         if(style.height!==height)style.height=height;
       };
@@ -230,7 +239,7 @@ app.registerExtension({
       return result;
     };
     const configured=nodeType.prototype.onConfigure;
-    nodeType.prototype.onConfigure=function(){const result=configured?.apply(this,arguments);if(this.panel){this.panel.crop?.restore();this.panel.selectedPath=this.widgets?.find(w=>w.name==='selected_path')?.value||'';for(const card of this.panel.grid.children)this.panel.markSelected(card);}return result;};
+    nodeType.prototype.onConfigure=function(){const result=configured?.apply(this,arguments);ensureBrowserOutputs(this);this.syncPanelSize?.();if(this.panel){this.panel.crop?.restore();this.panel.selectedPath=this.widgets?.find(w=>w.name==='selected_path')?.value||'';for(const card of this.panel.grid.children)this.panel.markSelected(card);}return result;};
     const removed=nodeType.prototype.onRemoved;
     nodeType.prototype.onRemoved=function(){this.panel?.destroy();return removed?.apply(this,arguments);};
   }
