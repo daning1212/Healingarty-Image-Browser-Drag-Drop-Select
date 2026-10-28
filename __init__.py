@@ -284,3 +284,41 @@ def large_preview(raw):
 async def get_large_preview(request):
     data, width, height = await guarded(large_preview, request.query.get('path', ''))
     return web.Response(body=data, content_type='image/jpeg', headers={'X-Image-Width': str(width), 'X-Image-Height': str(height), 'Cache-Control': 'no-store'})
+
+
+def save_clipboard_image(raw, data):
+    path = Path(raw).expanduser().resolve(strict=True)
+    if not path.is_dir():
+        raise ValueError('저장할 폴더를 선택하세요.')
+    with Image.open(io.BytesIO(data)) as original:
+        original.load()
+        image = ImageOps.exif_transpose(original).convert('RGBA')
+    fd, target = tempfile.mkstemp(prefix='clipboard_', suffix='.png', dir=path)
+    try:
+        with os.fdopen(fd, 'wb') as stream:
+            image.save(stream, 'PNG')
+    except Exception:
+        Path(target).unlink(missing_ok=True)
+        raise
+    return {'path': str(target)}
+
+
+@routes.post('/healingarty/browser/paste')
+async def paste_image(request):
+    reader = await request.multipart()
+    path = None
+    data = bytearray()
+    async for part in reader:
+        if part.name == 'path':
+            path = await part.text()
+        elif part.name == 'image':
+            while True:
+                chunk = await part.read_chunk()
+                if not chunk:
+                    break
+                data.extend(chunk)
+                if len(data) > 32 * 1024 * 1024:
+                    raise web.HTTPRequestEntityTooLarge(max_size=32 * 1024 * 1024, actual_size=len(data))
+    if not path or not data:
+        raise web.HTTPBadRequest(text='폴더와 클립보드 이미지가 필요합니다.')
+    return web.json_response(await guarded(save_clipboard_image, path, bytes(data)))
