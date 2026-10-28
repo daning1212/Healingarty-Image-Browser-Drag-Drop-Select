@@ -1,6 +1,6 @@
 // Route middle-button navigation from the DOM overlay to ComfyUI's graph canvas.
 // Wheel scrolls only the photo list; other panel areas follow graph navigation.
-export function installCanvasPan(root, getCanvas, hidePreview, photoList, resizeThumbnails) {
+export function installCanvasPan(root, getCanvas, hidePreview, photoList, resizeThumbnails, folderList) {
   const doc=root.ownerDocument, win=doc.defaultView;
   let active=null;
   function forward(type,e){
@@ -41,12 +41,13 @@ export function installCanvasPan(root, getCanvas, hidePreview, photoList, resize
     try{forward('pointerdown',e);}catch(error){finish();throw error;}
   }
   function wheel(e){
-    if(photoList?.contains(e.target)){
+    const scrollList=folderList?.contains(e.target)?folderList:photoList?.contains(e.target)?photoList:null;
+    if(scrollList){
       stop(e);hidePreview();
-      if(e.ctrlKey&&resizeThumbnails){if(e.deltaY)resizeThumbnails(e.deltaY);return;}
-      const unit=e.deltaMode===1?40:e.deltaMode===2?photoList.clientHeight:1;
-      photoList.scrollTop+=e.deltaY*unit;
-      photoList.scrollLeft+=e.deltaX*unit;
+      if(scrollList===photoList&&e.ctrlKey&&resizeThumbnails){if(e.deltaY)resizeThumbnails(e.deltaY);return;}
+      const unit=e.deltaMode===1?40:e.deltaMode===2?scrollList.clientHeight:1;
+      scrollList.scrollTop+=e.deltaY*unit;
+      scrollList.scrollLeft+=e.deltaX*unit;
       return;
     }
     const canvas=getCanvas();if(!canvas?.dispatchEvent||!win.WheelEvent)return;
