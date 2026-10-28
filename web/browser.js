@@ -25,12 +25,18 @@ function previewSize(naturalWidth,naturalHeight,thumbWidth,thumbHeight,viewWidth
 class BrowserPanel {
   constructor(node) {
     this.tree=new Map();this.treeRoots=[];this.expanded=new Set();this.treeLoading=new Set();this.selectedPath=node.widgets?.find(w=>w.name==='selected_path')?.value||'';this.node=node; this.path=''; this.parent=''; this.history=[]; this.next=null; this.generation=0; this.urls=new Set(); this.queue=[]; this.active=0;
-    this.root=el('div','ha-browser');
+    this.root=el('div','ha-browser');this.root.tabIndex=0;
+    this.root.addEventListener('pointerdown',e=>{if(e.button===0&&!e.target.closest('input,textarea,button,select,[contenteditable="true"]'))this.root.focus({preventScroll:true});});
+    this.root.addEventListener('paste',e=>{
+      if(e.target.closest('input,textarea,[contenteditable="true"]'))return;
+      const files=Array.from(e.clipboardData?.items??[]).filter(item=>item.kind==='file'&&item.type.startsWith('image/')).map(item=>item.getAsFile()).filter(Boolean);
+      if(!files.length)return;e.preventDefault();e.stopImmediatePropagation();this.pasteImages(files);
+    },true);
     const tools=el('div','ha-tools'); this.input=el('input'); this.input.placeholder='D:\\이미지 또는 /home/user/pictures';
     this.input.onkeydown=e=>{if(e.key==='Enter')this.navigate(this.input.value);};
     tools.append(button('←',()=>this.back()),button('↑',()=>this.navigate(this.parent)),button('⟳',()=>this.navigate(this.path,false)),this.input,button('이동',()=>this.navigate(this.input.value)));
     const actions=el('div','ha-tools');
-    actions.append(el('span','ha-version','v0.3.5'),button('현재 경로 열기',()=>this.open()),button('경로 지정',()=>{this.picker.hidden=!this.picker.hidden;}),button('☆ 즐겨찾기',()=>this.favorite()));
+    actions.append(el('span','ha-version','v0.3.6'),button('현재 경로 열기',()=>this.open()),button('경로 지정',()=>{this.picker.hidden=!this.picker.hidden;}),button('☆ 즐겨찾기',()=>this.favorite()));
     this.search=el('input'); this.search.placeholder='파일명 검색'; let timer;
     this.search.oninput=()=>{clearTimeout(timer);timer=setTimeout(()=>this.navigate(this.path,false),250);};
     const size=this.thumbSize=el('input');size.type='range';size.min=80;size.max=220;size.value=read('size',120);size.title='썸네일 크기 · 사진 목록에서 Ctrl+휠';
@@ -48,7 +54,7 @@ class BrowserPanel {
     this.divider.onpointerdown=e=>{if(e.button!==0)return;e.preventDefault();this.divider.setPointerCapture(e.pointerId);};
     this.divider.onpointermove=e=>{if(!this.divider.hasPointerCapture(e.pointerId))return;const rect=this.workspace.getBoundingClientRect();const fraction=Math.max(.3,Math.min(.7,(e.clientX-rect.left)/rect.width));this.browserPane.style.flexBasis=(fraction*100)+'%';};
     this.divider.onpointerup=e=>{if(this.divider.hasPointerCapture(e.pointerId))this.divider.releasePointerCapture(e.pointerId);};
-    this.removeCanvasPan=installCanvasPan(this.root,()=>app.canvas?.canvas,()=>this.hidePreview(),this.scroller,delta=>this.setThumbnailSize(Number(this.thumbSize.value)+(delta<0?10:-10)));
+    this.removeCanvasPan=installCanvasPan(this.root,()=>app.canvas?.canvas,()=>this.hidePreview(),this.scroller,delta=>this.setThumbnailSize(Number(this.thumbSize.value)+(delta<0?10:-10)),this.folders);
     for(const event of ['pointerdown','mousedown','pointerup','mouseup','click','dblclick','wheel','keydown'])this.root.addEventListener(event,e=>e.stopPropagation());
     this.observer=new IntersectionObserver(entries=>{for(const entry of entries)if(entry.isIntersecting){this.observer.unobserve(entry.target);this.queue.push({card:entry.target,generation:this.generation});}this.pump();},{root:this.scroller,rootMargin:'120px'});
     request('roots',{}).then(data=>{for(const path of data.roots){this.roots.append(button(path,()=>this.navigate(path)));this.treeEntry(path,path);if(!this.treeRoots.includes(path))this.treeRoots.push(path);}this.renderTree();}).catch(e=>this.error(e));
@@ -56,6 +62,18 @@ class BrowserPanel {
     this.onPreviewKey=e=>{if(e.key==='Escape')this.hidePreview();};
     this.onPreviewBlur=()=>this.hidePreview();document.addEventListener('keydown',this.onPreviewKey);window.addEventListener('blur',this.onPreviewBlur);
     this.navigate(read('path',''));
+  }
+  async pasteImages(files){
+    const path=this.path;if(!path||this.pasting)return;this.pasting=true;
+    this.status.textContent='클립보드 이미지 저장 중…';
+    try{
+      for(const file of files){
+        const data=new FormData();data.append('path',path);data.append('image',file,'clipboard.png');
+        const response=await api.fetchApi('/healingarty/browser/paste',{method:'POST',body:data});
+        if(!response.ok)throw new Error(await response.text());
+      }
+      if(this.path===path){await this.navigate(path,false);this.status.textContent=files.length+'개 이미지 붙여넣기 완료';}
+    }catch(e){this.error(e);}finally{this.pasting=false;}
   }
   setThumbnailSize(value){const n=Number(value);const size=Math.max(80,Math.min(220,Number.isFinite(n)?n:120));this.thumbSize.value=String(size);this.root.style.setProperty('--ha-size',size+'px');save('size',size);}
   toggleCrop(open){this.crop.root.hidden=!open;this.divider.hidden=!open;this.browserPane.style.flexBasis=open?'55%':'100%';if(open)this.crop.draw();}
@@ -170,7 +188,7 @@ class BrowserPanel {
 app.registerExtension({
   name:'Healingarty.ImageBrowser',
   async setup(){
-    const style=el('link');style.rel='stylesheet';style.href=new URL('./browser.css?v=0.3.5',import.meta.url).href;document.head.append(style);
+    const style=el('link');style.rel='stylesheet';style.href=new URL('./browser.css?v=0.3.6',import.meta.url).href;document.head.append(style);
     // Capture only our private MIME: never invoke ComfyUI's PNG workflow loader.
     const own=e=>Array.from(e.dataTransfer?.types??[]).includes(MIME);
     document.addEventListener('dragover',e=>{if(own(e)){e.preventDefault();e.stopImmediatePropagation();e.dataTransfer.dropEffect='copy';}},true);
