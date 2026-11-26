@@ -343,26 +343,113 @@ async def paste_image(request):
     return web.json_response(await guarded(save_clipboard_image, path, bytes(data)))
 
 
-def copy_image_file(raw, dest):
-    source = image_path(raw)
-    folder = Path(dest).expanduser().resolve(strict=True)
-    if not folder.is_dir():
-        raise ValueError('저장할 폴더를 선택하세요.')
-    # Never overwrite: name.png -> name_copy.png -> name_copy2.png ...
-    for index in range(0, 10000):
-        suffix = '' if index == 0 else ('_copy' if index == 1 else f'_copy{index}')
-        target = folder / f'{source.stem}{suffix}{source.suffix}'
-        try:
-            with source.open('rb') as src, target.open('xb') as dst:
-                shutil.copyfileobj(src, dst)
-            shutil.copystat(source, target, follow_symlinks=True)
-            return {'path': str(target)}
-        except FileExistsError:
-            continue
+# ---- Explorer-style file operations (v0.4.0) ----
+_BAD_NAME = set('\\/:*?"<>|')
+def _valid_name(name):
+    if not isinstance(name, str):
+        raise ValueError('이름이 필요합니다.')
+    name = name.strip()
+    if (not name or name in ('.', '..') or len(name) > 255 or name.endswith('.')
+            or any(c in _BAD_NAME or ord(c) < 32 for c in name)):
+        raise ValueError('사용할 수 없는 이름입니다. \\ / : * ? " < > | 는 쓸 수 없습니다.')
+    return name
+def _entry(raw):
+    path = Path(raw).expanduser().resolve(strict=True)
+    if path.parent == path:
+        raise ValueError('드라이브 자체는 다룰 수 없습니다.')
+    if not (path.is_dir() or (path.is_file() and path.suffix.lower() in EXTENSIONS)):
+        raise ValueError(f'폴더나 지원하는 이미지가 아닙니다: {path.name}')
+    return path
+def _folder(raw):
+    path = Path(raw).expanduser().resolve(strict=True)
+    if not path.is_dir():
+        raise ValueError('대상 폴더를 선택하세요.')
+    return path
+def _free_name(folder, name, is_dir, tag='_copy'):
+    stem, suffix = (name, '') if is_dir else (Path(name).stem, Path(name).suffix)
+    for index in range(10000):
+        extra = '' if index == 0 else (tag if index == 1 else f'{tag}{index}')
+        target = folder / f'{stem}{extra}{suffix}'
+        if not os.path.lexists(target):
+            return target
     raise ValueError('사용 가능한 파일 이름을 찾지 못했습니다.')
-@routes.post('/healingarty/browser/copy')
-async def copy_file(request):
+def _check_target(source, folder):
+    if source.is_dir() and (folder == source or source in folder.parents):
+        raise ValueError(f'폴더를 자기 자신 안으로 넣을 수 없습니다: {source.name}')
+def _trash(path):
+    try:
+        from send2trash import send2trash
+        send2trash(str(path))
+        return 'trash'
+    except ImportError:
+        pass
+    # Fallback without send2trash: keep a recoverable copy next to the original.
+    bin_dir = path.parent / '.healingarty_trash'
+    bin_dir.mkdir(exist_ok=True)
+    shutil.move(str(path), str(_free_name(bin_dir, path.name, path.is_dir(), '_')))
+    return 'folder'
+def file_operation(body):
+    op = body.get('op')
+    results = []
+    if op in ('copy', 'move'):
+        paths = body.get('paths')
+        if not isinstance(paths, list) or not paths or not all(isinstance(p, str) for p in paths):
+            raise ValueError('복사할 항목이 없습니다.')
+        folder = _folder(body.get('dest', ''))
+        sources = [_entry(p) for p in dict.fromkeys(paths)]
+        for source in sources:
+            _check_target(source, folder)
+        for source in sources:
+            if op == 'move' and source.parent == folder:
+                results.append({'from': str(source), 'to': str(source)})
+                continue
+            target = _free_name(folder, source.name, source.is_dir())
+            if op == 'copy':
+                if source.is_dir():
+                    shutil.copytree(source, target)
+                else:
+                    with source.open('rb') as src, target.open('xb') as dst:
+                        shutil.copyfileobj(src, dst)
+                    shutil.copystat(source, target)
+            else:
+                shutil.move(str(source), str(target))
+            results.append({'from': str(source), 'to': str(target)})
+        return {'op': op, 'results': results}
+    if op == 'delete':
+        paths = body.get('paths')
+        if not isinstance(paths, list) or not paths or not all(isinstance(p, str) for p in paths):
+            raise ValueError('삭제할 항목이 없습니다.')
+        mode = 'trash'
+        for source in [_entry(p) for p in dict.fromkeys(paths)]:
+            mode = _trash(source)
+            results.append({'from': str(source), 'to': None})
+        return {'op': op, 'results': results, 'mode': mode}
+    if op == 'rename':
+        source = _entry(body.get('path', ''))
+        name = _valid_name(body.get('name'))
+        if source.is_file() and Path(name).suffix.lower() not in EXTENSIONS:
+            raise ValueError('이미지 확장자(.png, .jpg 등)를 유지하세요.')
+        target = source.parent / name
+        same = os.path.lexists(target) and os.path.normcase(str(target)) == os.path.normcase(str(source))
+        if os.path.lexists(target) and not same:
+            raise ValueError(f'같은 이름이 이미 있습니다: {name}')
+        os.rename(source, target)
+        return {'op': op, 'results': [{'from': str(source), 'to': str(target)}]}
+    if op == 'mkdir':
+        folder = _folder(body.get('dest', ''))
+        name = _valid_name(body.get('name'))
+        target = folder / name
+        if os.path.lexists(target):
+            raise ValueError(f'같은 이름이 이미 있습니다: {name}')
+        target.mkdir()
+        return {'op': op, 'results': [{'from': None, 'to': str(target)}]}
+    raise ValueError('알 수 없는 작업입니다.')
+@routes.post('/healingarty/browser/fileop')
+async def file_op(request):
     body = await request.json()
-    if not isinstance(body, dict) or not isinstance(body.get('path'), str) or not isinstance(body.get('dest'), str):
-        raise web.HTTPBadRequest(text='원본 이미지와 대상 폴더가 필요합니다.')
-    return web.json_response(await guarded(copy_image_file, body['path'], body['dest']))
+    if not isinstance(body, dict):
+        raise web.HTTPBadRequest(text='잘못된 요청입니다.')
+    try:
+        return web.json_response(await guarded(file_operation, body))
+    except shutil.Error as exc:
+        raise web.HTTPBadRequest(text=str(exc)) from exc

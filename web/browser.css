@@ -40,3 +40,5 @@
 
 .ha-folder-card{cursor:pointer}
 .ha-folder-icon{display:flex;align-items:center;justify-content:center;width:100%;aspect-ratio:1;font-size:calc(var(--ha-size,120px)*.5)}
+.ha-card.ha-marked{background:#294768;border-color:#83baff}
+.ha-card.ha-cut{opacity:.45}

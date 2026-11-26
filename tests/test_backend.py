@@ -211,4 +211,37 @@ class BackendTests(unittest.TestCase):
         np.testing.assert_allclose(mask[0],1-np.asarray(expected,dtype=np.float32)/255)
         np.testing.assert_allclose(crop_mask,mask)
 
+    def test_explorer_file_operations(self):
+        ops=self.module.file_operation
+        root=self.base/'ops';src=root/'src';dst=root/'dst';src.mkdir(parents=True);dst.mkdir()
+        Image.new('RGB',(3,3)).save(src/'a.png');(src/'sub').mkdir();Image.new('RGB',(2,2)).save(src/'sub'/'in.png')
+        r=ops({'op':'copy','paths':[str(src/'a.png'),str(src/'sub')],'dest':str(dst)})
+        self.assertEqual([Path(x['to']).name for x in r['results']],['a.png','sub'])
+        self.assertTrue((dst/'sub'/'in.png').exists())
+        r=ops({'op':'copy','paths':[str(src/'a.png')],'dest':str(dst)})
+        self.assertEqual(Path(r['results'][0]['to']).name,'a_copy.png')
+        with self.assertRaises(ValueError): ops({'op':'move','paths':[str(src)],'dest':str(src/'sub')})
+        with self.assertRaises(ValueError): ops({'op':'copy','paths':[str(src)],'dest':str(src)})
+        r=ops({'op':'move','paths':[str(dst/'a_copy.png')],'dest':str(src)})
+        self.assertFalse((dst/'a_copy.png').exists());self.assertTrue((src/'a_copy.png').exists())
+        r=ops({'op':'rename','path':str(src/'a_copy.png'),'name':'b.png'})
+        self.assertTrue((src/'b.png').exists())
+        for bad in ['../x.png','a/b.png','x:y.png','', 'b.txt']:
+            with self.assertRaises(ValueError): ops({'op':'rename','path':str(src/'b.png'),'name':bad})
+        with self.assertRaises(ValueError): ops({'op':'rename','path':str(src/'b.png'),'name':'a.png'})
+        ops({'op':'mkdir','dest':str(src),'name':'새 폴더'});self.assertTrue((src/'새 폴더').is_dir())
+        with self.assertRaises(ValueError): ops({'op':'mkdir','dest':str(src),'name':'새 폴더'})
+        (src/'note.txt').write_text('x')
+        with self.assertRaises(ValueError): ops({'op':'delete','paths':[str(src/'note.txt')]})
+        import builtins
+        real=builtins.__import__
+        def no_trash(name,*a,**k):
+            if name=='send2trash': raise ImportError
+            return real(name,*a,**k)
+        builtins.__import__=no_trash
+        try: r=ops({'op':'delete','paths':[str(src/'b.png'),str(src/'새 폴더')]})
+        finally: builtins.__import__=real
+        self.assertEqual(r['mode'],'folder');self.assertFalse((src/'b.png').exists())
+        self.assertTrue((src/'.healingarty_trash'/'b.png').exists());self.assertTrue((src/'.healingarty_trash'/'새 폴더').is_dir())
+        self.assertTrue((src/'note.txt').exists())
 if __name__=='__main__': unittest.main()
