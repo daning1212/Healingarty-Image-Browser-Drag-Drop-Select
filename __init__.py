@@ -341,3 +341,28 @@ async def paste_image(request):
     if not path or not data:
         raise web.HTTPBadRequest(text='폴더와 클립보드 이미지가 필요합니다.')
     return web.json_response(await guarded(save_clipboard_image, path, bytes(data)))
+
+
+def copy_image_file(raw, dest):
+    source = image_path(raw)
+    folder = Path(dest).expanduser().resolve(strict=True)
+    if not folder.is_dir():
+        raise ValueError('저장할 폴더를 선택하세요.')
+    # Never overwrite: name.png -> name_copy.png -> name_copy2.png ...
+    for index in range(0, 10000):
+        suffix = '' if index == 0 else ('_copy' if index == 1 else f'_copy{index}')
+        target = folder / f'{source.stem}{suffix}{source.suffix}'
+        try:
+            with source.open('rb') as src, target.open('xb') as dst:
+                shutil.copyfileobj(src, dst)
+            shutil.copystat(source, target, follow_symlinks=True)
+            return {'path': str(target)}
+        except FileExistsError:
+            continue
+    raise ValueError('사용 가능한 파일 이름을 찾지 못했습니다.')
+@routes.post('/healingarty/browser/copy')
+async def copy_file(request):
+    body = await request.json()
+    if not isinstance(body, dict) or not isinstance(body.get('path'), str) or not isinstance(body.get('dest'), str):
+        raise web.HTTPBadRequest(text='원본 이미지와 대상 폴더가 필요합니다.')
+    return web.json_response(await guarded(copy_image_file, body['path'], body['dest']))

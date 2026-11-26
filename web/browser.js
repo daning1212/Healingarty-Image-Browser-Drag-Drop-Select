@@ -37,19 +37,24 @@ class BrowserPanel {
     this.hovering=false;this.root.addEventListener('pointerenter',()=>{this.hovering=true;});this.root.addEventListener('pointerleave',()=>{this.hovering=false;});
     this.onDocPaste=e=>{
       if(!this.hovering||this.root.contains(e.target)||e.target.closest?.('input,textarea,[contenteditable="true"]'))return;
-      const files=Array.from(e.clipboardData?.items??[]).filter(item=>item.kind==='file'&&item.type.startsWith('image/')).map(item=>item.getAsFile()).filter(Boolean);
-      if(!files.length)return;e.preventDefault();e.stopImmediatePropagation();this.pasteImages(files);
+      this.handlePaste(e);
     };document.addEventListener('paste',this.onDocPaste,true);
     this.root.addEventListener('paste',e=>{
       if(e.target.closest('input,textarea,[contenteditable="true"]'))return;
-      const files=Array.from(e.clipboardData?.items??[]).filter(item=>item.kind==='file'&&item.type.startsWith('image/')).map(item=>item.getAsFile()).filter(Boolean);
-      if(!files.length)return;e.preventDefault();e.stopImmediatePropagation();this.pasteImages(files);
+      this.handlePaste(e);
     },true);
+    this.onDocCopy=e=>{
+      if(!(this.hovering||this.root.contains(document.activeElement)))return;
+      if(e.target.closest?.('input,textarea,[contenteditable="true"]')||String(window.getSelection?.()??''))return;
+      if(!this.selectedPath)return;this.copyImage();
+    };
+    const copyKey=e=>{if((e.ctrlKey||e.metaKey)&&!e.shiftKey&&!e.altKey&&e.key.toLowerCase()==='c')this.onDocCopy(e);};
+    this.onCopyKey=copyKey;document.addEventListener('keydown',copyKey,true);
     const tools=el('div','ha-tools'); this.input=el('input'); this.input.placeholder='D:\\이미지 또는 /home/user/pictures';
     this.input.onkeydown=e=>{if(e.key==='Enter')this.navigate(this.input.value);};
     tools.append(button('←',()=>this.back()),button('↑',()=>this.navigate(this.parent)),button('⟳',()=>this.navigate(this.path,false)),this.input,button('이동',()=>this.navigate(this.input.value)));
     const actions=el('div','ha-tools');
-    actions.append(el('span','ha-version','v0.3.8'),button('현재 경로 열기',()=>this.open()),button('경로 지정',()=>{this.picker.hidden=!this.picker.hidden;}),button('☆ 즐겨찾기',()=>this.favorite()));
+    actions.append(el('span','ha-version','v0.3.9'),button('현재 경로 열기',()=>this.open()),button('경로 지정',()=>{this.picker.hidden=!this.picker.hidden;}),button('☆ 즐겨찾기',()=>this.favorite()));
     this.search=el('input'); this.search.placeholder='파일명 검색'; let timer;
     this.search.oninput=()=>{clearTimeout(timer);timer=setTimeout(()=>this.navigate(this.path,false),250);};
     const size=this.thumbSize=el('input');size.type='range';size.min=80;size.max=220;size.value=read('size',120);size.title='썸네일 크기 · 사진 목록에서 Ctrl+휠';
@@ -75,6 +80,25 @@ class BrowserPanel {
     this.onPreviewKey=e=>{if(e.key==='Escape')this.hidePreview();};
     this.onPreviewBlur=()=>this.hidePreview();document.addEventListener('keydown',this.onPreviewKey);window.addEventListener('blur',this.onPreviewBlur);
     this.navigate(read('path',''));
+  }
+  copyImage(){
+    this.clip=this.selectedPath;const name=this.selectedPath.split(/[\\/]/).pop();
+    // 시스템 클립보드의 예전 이미지가 붙여넣기에 섞이지 않도록 경로 텍스트로 덮어씁니다(실패해도 무방).
+    try{navigator.clipboard?.writeText(this.selectedPath).catch(()=>{});}catch{}
+    this.status.textContent='복사됨: '+name+' · 다른 폴더로 이동해 Ctrl+V';
+  }
+  handlePaste(e){
+    const files=Array.from(e.clipboardData?.items??[]).filter(item=>item.kind==='file'&&item.type.startsWith('image/')).map(item=>item.getAsFile()).filter(Boolean);
+    if(files.length){this.clip=null;e.preventDefault();e.stopImmediatePropagation();this.pasteImages(files);return;}
+    if(this.clip){e.preventDefault();e.stopImmediatePropagation();this.pasteCopied();}
+  }
+  async pasteCopied(){
+    const source=this.clip,path=this.path;if(!source||!path||this.pasting)return;this.pasting=true;
+    this.status.textContent='파일 복사 중…';
+    try{
+      await request('copy',{path:source,dest:path},true);
+      if(this.path===path){await this.navigate(path,false);this.status.textContent=source.split(/[\\/]/).pop()+' 을(를) '+path+' 폴더에 복사했습니다';}
+    }catch(e){this.error(e);}finally{this.pasting=false;}
   }
   async pasteImages(files){
     const path=this.path;if(!path||this.pasting)return;this.pasting=true;
@@ -103,7 +127,7 @@ class BrowserPanel {
       if(remember&&this.path&&data.path!==this.path)this.history.push(this.path);
       this.path=data.path;this.parent=data.parent;this.input.value=data.path;save('path',data.path);
       for(const url of this.urls)URL.revokeObjectURL(url);this.urls.clear();this.grid.replaceChildren();this.scroller.scrollTop=0;
-      this.append(data);this.loadTree(this.path);this.renderTree();this.status.textContent=`${data.total}개 · 이미지를 Load Image 위로 드래그 · Ctrl+V로 이 폴더에 붙여넣기`;
+      this.append(data);this.loadTree(this.path);this.renderTree();this.status.textContent=`${data.total}개 · 이미지를 Load Image 위로 드래그 · Ctrl+C 복사 · Ctrl+V 붙여넣기`;
     }catch(e){this.error(e);}finally{if(generation===this.generation)this.more.disabled=false;}
   }
   append(data){this.next=data.next;this.more.hidden=this.next===null;for(const item of data.items){
@@ -200,13 +224,13 @@ class BrowserPanel {
     const blob=await response.blob();if(generation!==this.generation||!card.isConnected)return;const url=URL.createObjectURL(blob);this.urls.add(url);card.querySelector('img').src=url;
     card.querySelector('.ha-info').textContent=`${response.headers.get('X-Image-Width')} × ${response.headers.get('X-Image-Height')} · ${card.item.name.split('.').pop().toUpperCase()}`;
   }catch(e){if(generation===this.generation&&e.name!=='AbortError')card.querySelector('.ha-info').textContent='읽기 실패';}}
-  destroy(){document.removeEventListener('paste',this.onDocPaste,true);this.removeCanvasPan?.();this.crop?.destroy();this.hidePreview();document.removeEventListener('keydown',this.onPreviewKey);window.removeEventListener('blur',this.onPreviewBlur);this.generation++;this.controller?.abort();this.observer.disconnect();this.queue=[];for(const url of this.urls)URL.revokeObjectURL(url);}
+  destroy(){document.removeEventListener('paste',this.onDocPaste,true);document.removeEventListener('keydown',this.onCopyKey,true);this.removeCanvasPan?.();this.crop?.destroy();this.hidePreview();document.removeEventListener('keydown',this.onPreviewKey);window.removeEventListener('blur',this.onPreviewBlur);this.generation++;this.controller?.abort();this.observer.disconnect();this.queue=[];for(const url of this.urls)URL.revokeObjectURL(url);}
 }
 
 app.registerExtension({
   name:'Healingarty.ImageBrowser',
   async setup(){
-    const style=el('link');style.rel='stylesheet';style.href=new URL('./browser.css?v=0.3.8',import.meta.url).href;document.head.append(style);
+    const style=el('link');style.rel='stylesheet';style.href=new URL('./browser.css?v=0.3.9',import.meta.url).href;document.head.append(style);
     // Capture only our private MIME: never invoke ComfyUI's PNG workflow loader.
     const own=e=>Array.from(e.dataTransfer?.types??[]).includes(MIME);
     document.addEventListener('dragover',e=>{if(own(e)){e.preventDefault();e.stopImmediatePropagation();e.dataTransfer.dropEffect='copy';}},true);
