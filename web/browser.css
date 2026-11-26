@@ -37,3 +37,6 @@
 .ha-browser .ha-more:hover{background:#2582ec}
 .ha-browser .ha-more:focus-visible{outline:2px solid #a9d6ff;outline-offset:2px}
 .ha-browser .ha-more:disabled{background:#254c7b;border-color:#466b98;color:#b8cce5;cursor:wait}
+
+.ha-folder-card{cursor:pointer}
+.ha-folder-icon{display:flex;align-items:center;justify-content:center;width:100%;aspect-ratio:1;font-size:calc(var(--ha-size,120px)*.5)}

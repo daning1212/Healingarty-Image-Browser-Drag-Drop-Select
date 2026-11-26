@@ -34,6 +34,12 @@ class BrowserPanel {
     this.tree=new Map();this.treeRoots=[];this.expanded=new Set();this.treeLoading=new Set();this.selectedPath=node.widgets?.find(w=>w.name==='selected_path')?.value||'';this.node=node; this.path=''; this.parent=''; this.history=[]; this.next=null; this.generation=0; this.urls=new Set(); this.queue=[]; this.active=0;
     this.root=el('div','ha-browser');this.root.tabIndex=0;
     this.root.addEventListener('pointerdown',e=>{if(e.button===0&&!e.target.closest('input,textarea,button,select,[contenteditable="true"]'))this.root.focus({preventScroll:true});});
+    this.hovering=false;this.root.addEventListener('pointerenter',()=>{this.hovering=true;});this.root.addEventListener('pointerleave',()=>{this.hovering=false;});
+    this.onDocPaste=e=>{
+      if(!this.hovering||this.root.contains(e.target)||e.target.closest?.('input,textarea,[contenteditable="true"]'))return;
+      const files=Array.from(e.clipboardData?.items??[]).filter(item=>item.kind==='file'&&item.type.startsWith('image/')).map(item=>item.getAsFile()).filter(Boolean);
+      if(!files.length)return;e.preventDefault();e.stopImmediatePropagation();this.pasteImages(files);
+    };document.addEventListener('paste',this.onDocPaste,true);
     this.root.addEventListener('paste',e=>{
       if(e.target.closest('input,textarea,[contenteditable="true"]'))return;
       const files=Array.from(e.clipboardData?.items??[]).filter(item=>item.kind==='file'&&item.type.startsWith('image/')).map(item=>item.getAsFile()).filter(Boolean);
@@ -79,7 +85,7 @@ class BrowserPanel {
         const response=await api.fetchApi('/healingarty/browser/paste',{method:'POST',body:data});
         if(!response.ok)throw new Error(await response.text());
       }
-      if(this.path===path){await this.navigate(path,false);this.status.textContent=files.length+'개 이미지 붙여넣기 완료';}
+      if(this.path===path){await this.navigate(path,false);this.status.textContent=files.length+'개 이미지를 '+path+' 폴더에 저장했습니다';}
     }catch(e){this.error(e);}finally{this.pasting=false;}
   }
   setThumbnailSize(value){const n=Number(value);const size=Math.max(80,Math.min(220,Number.isFinite(n)?n:120));this.thumbSize.value=String(size);this.root.style.setProperty('--ha-size',size+'px');save('size',size);}
@@ -97,11 +103,16 @@ class BrowserPanel {
       if(remember&&this.path&&data.path!==this.path)this.history.push(this.path);
       this.path=data.path;this.parent=data.parent;this.input.value=data.path;save('path',data.path);
       for(const url of this.urls)URL.revokeObjectURL(url);this.urls.clear();this.grid.replaceChildren();this.scroller.scrollTop=0;
-      this.append(data);this.loadTree(this.path);this.renderTree();this.status.textContent=`${data.total}개 · 이미지를 Load Image 위로 드래그`;
+      this.append(data);this.loadTree(this.path);this.renderTree();this.status.textContent=`${data.total}개 · 이미지를 Load Image 위로 드래그 · Ctrl+V로 이 폴더에 붙여넣기`;
     }catch(e){this.error(e);}finally{if(generation===this.generation)this.more.disabled=false;}
   }
   append(data){this.next=data.next;this.more.hidden=this.next===null;for(const item of data.items){
-    if(item.directory)continue;
+    if(item.directory){
+      const card=el('div','ha-card ha-folder-card');card.item=item;card.tabIndex=0;card.setAttribute('role','button');card.setAttribute('aria-label','폴더 '+item.name);card.title=item.path;
+      const icon=el('div','ha-folder-icon','📁');const name=el('div','ha-name',item.name);name.title=item.name;const info=el('div','ha-info','폴더');
+      card.append(icon,name,info);card.onclick=()=>this.navigate(item.path);card.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();this.navigate(item.path);}};
+      this.grid.append(card);continue;
+    }
     const card=el('div','ha-card');card.item=item;card.draggable=true;card.tabIndex=0;card.setAttribute('role','button');card.setAttribute('aria-label',item.name);this.markSelected(card);card.onclick=()=>this.selectImage(item.path);card.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();this.selectImage(item.path);}};
     const img=el('img');img.draggable=false;img.alt=item.name;const name=el('div','ha-name',item.name);name.title=item.name;const info=el('div','ha-info','… · '+item.name.split('.').pop().toUpperCase());
     card.append(img,name,info);card.onmouseenter=()=>this.schedulePreview(card);card.onmouseleave=()=>this.hidePreview();
@@ -189,7 +200,7 @@ class BrowserPanel {
     const blob=await response.blob();if(generation!==this.generation||!card.isConnected)return;const url=URL.createObjectURL(blob);this.urls.add(url);card.querySelector('img').src=url;
     card.querySelector('.ha-info').textContent=`${response.headers.get('X-Image-Width')} × ${response.headers.get('X-Image-Height')} · ${card.item.name.split('.').pop().toUpperCase()}`;
   }catch(e){if(generation===this.generation&&e.name!=='AbortError')card.querySelector('.ha-info').textContent='읽기 실패';}}
-  destroy(){this.removeCanvasPan?.();this.crop?.destroy();this.hidePreview();document.removeEventListener('keydown',this.onPreviewKey);window.removeEventListener('blur',this.onPreviewBlur);this.generation++;this.controller?.abort();this.observer.disconnect();this.queue=[];for(const url of this.urls)URL.revokeObjectURL(url);}
+  destroy(){document.removeEventListener('paste',this.onDocPaste,true);this.removeCanvasPan?.();this.crop?.destroy();this.hidePreview();document.removeEventListener('keydown',this.onPreviewKey);window.removeEventListener('blur',this.onPreviewBlur);this.generation++;this.controller?.abort();this.observer.disconnect();this.queue=[];for(const url of this.urls)URL.revokeObjectURL(url);}
 }
 
 app.registerExtension({
