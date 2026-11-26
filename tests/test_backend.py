@@ -231,17 +231,6 @@ class BackendTests(unittest.TestCase):
         with self.assertRaises(ValueError): ops({'op':'rename','path':str(src/'b.png'),'name':'a.png'})
         ops({'op':'mkdir','dest':str(src),'name':'새 폴더'});self.assertTrue((src/'새 폴더').is_dir())
         with self.assertRaises(ValueError): ops({'op':'mkdir','dest':str(src),'name':'새 폴더'})
-        (src/'note.txt').write_text('x')
-        with self.assertRaises(ValueError): ops({'op':'delete','paths':[str(src/'note.txt')]})
-        import builtins
-        real=builtins.__import__
-        def no_trash(name,*a,**k):
-            if name=='send2trash': raise ImportError
-            return real(name,*a,**k)
-        builtins.__import__=no_trash
-        try: r=ops({'op':'delete','paths':[str(src/'b.png'),str(src/'새 폴더')]})
-        finally: builtins.__import__=real
-        self.assertEqual(r['mode'],'folder');self.assertFalse((src/'b.png').exists())
-        self.assertTrue((src/'.healingarty_trash'/'b.png').exists());self.assertTrue((src/'.healingarty_trash'/'새 폴더').is_dir())
-        self.assertTrue((src/'note.txt').exists())
+        with self.assertRaises(ValueError): ops({'op':'delete','paths':[str(src/'b.png')]})
+        self.assertTrue((src/'b.png').exists())
 if __name__=='__main__': unittest.main()

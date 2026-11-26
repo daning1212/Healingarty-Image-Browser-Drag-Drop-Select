@@ -49,7 +49,7 @@ class BrowserPanel {
     this.input.onkeydown=e=>{if(e.key==='Enter')this.navigate(this.input.value);};
     tools.append(button('←',()=>this.back()),button('↑',()=>this.navigate(this.parent)),button('⟳',()=>this.navigate(this.path,false)),this.input,button('이동',()=>this.navigate(this.input.value)));
     const actions=el('div','ha-tools');
-    actions.append(el('span','ha-version','v0.4.0'),button('현재 경로 열기',()=>this.open()),button('경로 지정',()=>{this.picker.hidden=!this.picker.hidden;}),button('☆ 즐겨찾기',()=>this.favorite()),button('새 폴더',()=>this.makeFolder()),button('이름 변경',()=>this.renameSelected()),button('삭제',()=>this.deleteSelected()));
+    actions.append(el('span','ha-version','v0.4.1'),button('현재 경로 열기',()=>this.open()),button('경로 지정',()=>{this.picker.hidden=!this.picker.hidden;}),button('☆ 즐겨찾기',()=>this.favorite()),button('새 폴더',()=>this.makeFolder()),button('이름 변경',()=>this.renameSelected()));
     this.search=el('input'); this.search.placeholder='파일명 검색'; let timer;
     this.search.oninput=()=>{clearTimeout(timer);timer=setTimeout(()=>this.navigate(this.path,false),250);};
     const size=this.thumbSize=el('input');size.type='range';size.min=80;size.max=220;size.value=read('size',120);size.title='썸네일 크기 · 사진 목록에서 Ctrl+휠';
@@ -85,7 +85,7 @@ class BrowserPanel {
     else if(e.ctrlKey||e.metaKey){if(!this.sel.delete(path))this.sel.add(path);this.anchor=path;}
     else{this.sel=new Set([path]);this.anchor=path;if(!card.item.directory)this.selectImage(path);}
     this.refreshMarks();
-    if(this.sel.size>1)this.status.textContent=this.sel.size+'개 선택됨 · Ctrl+C 복사 · Ctrl+X 잘라내기 · Delete 삭제';
+    if(this.sel.size>1)this.status.textContent=this.sel.size+'개 선택됨 · Ctrl+C 복사 · Ctrl+X 잘라내기';
   }
   selectAll(){this.sel=new Set(this.cards().filter(c=>c.item).map(c=>c.item.path));this.refreshMarks();this.status.textContent=this.sel.size+'개 선택됨';}
   handleKey(e){
@@ -100,7 +100,6 @@ class BrowserPanel {
       try{navigator.clipboard?.writeText(paths.join('\n')).catch(()=>{});}catch{}
       this.refreshMarks();this.status.textContent=(key==='x'?'잘라내기: ':'복사됨: ')+paths.length+'개 · 대상 폴더로 이동해 Ctrl+V';
     }else if(mod&&key==='a'&&!e.shiftKey){handled();this.selectAll();}
-    else if(e.key==='Delete'&&!mod){if(!this.sel.size)return;handled();this.deleteSelected();}
     else if(e.key==='F2'){handled();this.renameSelected();}
     else if(e.key==='Backspace'&&!mod){handled();this.navigate(this.parent);}
   }
@@ -122,16 +121,6 @@ class BrowserPanel {
       const data=await this.fileOp({op:clip.mode==='cut'?'move':'copy',paths:clip.paths,dest:path});
       if(clip.mode==='cut'){this.clip=null;this.syncSelection(data.results,false);}
       if(this.path===path){await this.navigate(path,false);this.status.textContent=data.results.length+'개 항목을 '+(clip.mode==='cut'?'이동':'복사')+'했습니다 → '+path;}
-    }catch(err){this.error(err);}finally{this.pasting=false;}
-  }
-  async deleteSelected(){
-    const paths=[...this.sel];if(!paths.length||this.pasting)return;
-    const names=paths.slice(0,5).map(p=>p.split(/[\\/]/).pop()).join('\n')+(paths.length>5?'\n… 외 '+(paths.length-5)+'개':'');
-    if(!window.confirm('삭제할까요? (휴지통으로 이동)\n\n'+names))return;
-    this.pasting=true;
-    try{
-      const data=await this.fileOp({op:'delete',paths});this.sel.clear();if(this.clip)this.clip=null;this.syncSelection(data.results,true);
-      await this.navigate(this.path,false);this.status.textContent=data.results.length+'개 삭제'+(data.mode==='trash'?'(휴지통)':' — 같은 폴더의 .healingarty_trash 로 이동');
     }catch(err){this.error(err);}finally{this.pasting=false;}
   }
   async renameSelected(){
@@ -292,7 +281,7 @@ class BrowserPanel {
 app.registerExtension({
   name:'Healingarty.ImageBrowser',
   async setup(){
-    const style=el('link');style.rel='stylesheet';style.href=new URL('./browser.css?v=0.4.0',import.meta.url).href;document.head.append(style);
+    const style=el('link');style.rel='stylesheet';style.href=new URL('./browser.css?v=0.4.1',import.meta.url).href;document.head.append(style);
     // Capture only our private MIME: never invoke ComfyUI's PNG workflow loader.
     const own=e=>Array.from(e.dataTransfer?.types??[]).includes(MIME);
     document.addEventListener('dragover',e=>{if(own(e)){e.preventDefault();e.stopImmediatePropagation();e.dataTransfer.dropEffect='copy';}},true);

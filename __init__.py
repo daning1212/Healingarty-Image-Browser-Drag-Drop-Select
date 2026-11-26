@@ -376,18 +376,6 @@ def _free_name(folder, name, is_dir, tag='_copy'):
 def _check_target(source, folder):
     if source.is_dir() and (folder == source or source in folder.parents):
         raise ValueError(f'폴더를 자기 자신 안으로 넣을 수 없습니다: {source.name}')
-def _trash(path):
-    try:
-        from send2trash import send2trash
-        send2trash(str(path))
-        return 'trash'
-    except ImportError:
-        pass
-    # Fallback without send2trash: keep a recoverable copy next to the original.
-    bin_dir = path.parent / '.healingarty_trash'
-    bin_dir.mkdir(exist_ok=True)
-    shutil.move(str(path), str(_free_name(bin_dir, path.name, path.is_dir(), '_')))
-    return 'folder'
 def file_operation(body):
     op = body.get('op')
     results = []
@@ -415,15 +403,6 @@ def file_operation(body):
                 shutil.move(str(source), str(target))
             results.append({'from': str(source), 'to': str(target)})
         return {'op': op, 'results': results}
-    if op == 'delete':
-        paths = body.get('paths')
-        if not isinstance(paths, list) or not paths or not all(isinstance(p, str) for p in paths):
-            raise ValueError('삭제할 항목이 없습니다.')
-        mode = 'trash'
-        for source in [_entry(p) for p in dict.fromkeys(paths)]:
-            mode = _trash(source)
-            results.append({'from': str(source), 'to': None})
-        return {'op': op, 'results': results, 'mode': mode}
     if op == 'rename':
         source = _entry(body.get('path', ''))
         name = _valid_name(body.get('name'))
